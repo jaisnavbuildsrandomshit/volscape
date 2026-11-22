@@ -1,0 +1,14 @@
+SYNTHETIC dirty fixture - deliberately injected defects (CSV line numbers, header = line 1)
+line 5: missing bid
+line 10: timestamp without timezone
+line 14: negative strike
+line 19: ask below bid
+line 23: invalid option type
+line 28: spot inconsistent with snapshot
+line 32: expired contract
+line 37: non-numeric bid
+line 42: rate inconsistent within expiry
+line 46: call bid above upper bound S*e^{-qT}
+line 52: suspiciously wide spread (flag, kept)
+line 57: American-style contract
+line 62 and line 170: duplicate contract with different quote
