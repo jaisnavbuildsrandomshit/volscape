@@ -343,19 +343,24 @@ def pnl_heatmap(pnl, spot_shocks, vol_shocks, title, currency, height=420):
     return fig
 
 
-def pnl_surface(pnl, spot_shocks, vol_shocks, currency, uirevision="pnl", height=460):
-    fig = go.Figure(go.Surface(x=np.asarray(spot_shocks) * 100, y=vol_shocks, z=pnl, colorscale=COLORSCALES["Phosphor"],
-                               contours=dict(z=dict(show=True, usecolormap=True, width=1)),
-                               colorbar=dict(title=dict(text=f"P&L ({currency})", font=dict(color=MUTED, size=10)), thickness=10,
-                                             tickfont=dict(color=MUTED, size=10)),
-                               hovertemplate="spot %{x:+.1f}%<br>vol %{y:+.1f}<br>P&L %{z:,.2f}<extra></extra>"))
-    ax = lambda t: dict(title=dict(text=t, font=dict(color=MUTED, size=11)), backgroundcolor=PANEL, gridcolor=GRID,
-                        showbackground=True, tickfont=dict(color=MUTED, size=10))
-    base_layout(fig, height=height)
-    fig.update_layout(meta="vs3d:pnl", uirevision=uirevision, margin=dict(l=0, r=0, t=8, b=0),
-                      scene=dict(xaxis=ax("spot shock (%)"), yaxis=ax("IV shock (vol pts)"), zaxis=ax(f"P&L ({currency})"),
-                                 bgcolor=BG, aspectratio=dict(x=1.3, y=1.3, z=0.7)))
-    return fig
+def pnl_surface(pnl, spot_shocks, vol_shocks, currency, uirevision="pnl", height=500):
+    m = np.nanmax(np.abs(pnl)) if np.isfinite(pnl).any() else 1
+    fig = go.Figure(go.Surface(
+        x=np.asarray(spot_shocks) * 100, y=vol_shocks, z=pnl, cmin=-m, cmax=m,
+        colorscale=[[0, RED], [0.5, "#06180e"], [1, TEAL]],
+        contours=dict(z=dict(show=True, usecolormap=True, width=1, project=dict(z=True)),
+                      x=dict(show=False), y=dict(show=False)),
+        lighting=dict(ambient=0.6, diffuse=0.6, specular=0.12, roughness=0.7),
+        colorbar=dict(title=dict(text=f"P&L ({currency})", font=dict(color=MUTED, size=10)), thickness=10,
+                      tickfont=dict(color=MUTED, size=10)),
+        hovertemplate="spot %{x:+.1f}%<br>vol %{y:+.1f} pts<br>P&L %{z:,.2f}<extra></extra>"))
+    fig.add_trace(go.Scatter3d(x=[0], y=[0], z=[float(pnl[len(vol_shocks) // 2, len(spot_shocks) // 2])],
+                               mode="markers", marker=dict(size=4, color=AMBER), name="unshocked",
+                               hovertemplate="unshocked P&L %{z:,.2f}<extra></extra>"))
+    fig.update_layout(scene=scene_axes("spot shock (%)", "IV shock (vol pts)", f"P&L ({currency})",
+                                       aspectratio=dict(x=1.4, y=1.2, z=0.7)))
+    return _layout3d(fig, "vs3d:pnl", "P&L surface · spot × parallel IV shock · NaN = N/A (not evaluable)", height,
+                     uirevision=uirevision)
 
 
 def standalone_html(fig, title):
@@ -413,3 +418,140 @@ def live_flow_figure(flows, height=240):
     fig.update_yaxes(**_axis("quote notional"))
     fig.update_layout(bargap=0.15)
     return fig
+
+
+# ----------------------------------------------------------------------------- shared 3D scene style
+def scene_axes(xt, yt, zt, **kw):
+    def ax(t):
+        return dict(title=dict(text=t, font=dict(color=MUTED, size=11)), backgroundcolor="#030a06",
+                    gridcolor="#0f2c1c", zerolinecolor="#1f5a3a", showbackground=True, showspikes=False,
+                    tickfont=dict(color=MUTED, size=10), color=MUTED)
+    return dict(xaxis=ax(xt), yaxis=ax(yt), zaxis=ax(zt), bgcolor=BG, aspectmode="manual",
+                aspectratio=kw.pop("aspectratio", dict(x=1.35, y=1.35, z=0.7)),
+                camera=kw.pop("camera", dict(eye=dict(x=-1.45, y=-1.45, z=0.8), center=dict(x=0, y=0, z=-0.12))), **kw)
+
+
+def _layout3d(fig, meta, title, height, uirevision="3d"):
+    base_layout(fig, height=height, title=title)
+    fig.update_layout(meta=meta, uirevision=uirevision, margin=dict(l=0, r=0, t=44 if title else 8, b=0),
+                      legend=dict(x=0.0, y=0.0, xanchor="left", yanchor="bottom", orientation="h",
+                                  bgcolor="rgba(0,0,0,0)", font=dict(color=MUTED, size=10)))
+    return fig
+
+
+# ----------------------------------------------------------------------------- 3D analytics
+def density_waterfall(dens_by_expiry: dict, chain: pd.DataFrame, selected=None, height=480):
+    """Risk-neutral density per expiry as vertical curtains in (k, T) space. Each curtain is the discrete
+    density over that slice's own observed strike range: nothing between expiries is invented."""
+    fig = go.Figure()
+    T_of = chain.groupby("expiry")["T"].first()
+    for exp, d in sorted(dens_by_expiry.items(), key=lambda kv: T_of.get(kv[0], 0)):
+        days = float(T_of.get(exp, np.nan)) * 365
+        k = d.k.to_numpy()
+        q_k = (d.density * d.strike).to_numpy()        # density per unit log-moneyness: q_K * K
+        sel = selected is not None and exp == selected
+        neg = q_k < 0
+        fig.add_trace(go.Surface(
+            x=np.vstack([k, k]), y=np.full((2, len(k)), days), z=np.vstack([np.zeros_like(q_k), q_k]),
+            surfacecolor=np.vstack([q_k, q_k]), colorscale=[[0, "#0a3d22"], [1, CYAN if sel else TEAL]],
+            showscale=False, opacity=0.9 if sel else 0.55, name=f"{exp:%Y-%m-%d}",
+            hovertemplate=f"{exp:%Y-%m-%d} · {days:.0f}d<br>k %{{x:.3f}}<br>q(k) %{{z:.4f}}<extra></extra>",
+            contours=dict(z=dict(show=False))))
+        fig.add_trace(go.Scatter3d(x=k, y=np.full(len(k), days), z=q_k, mode="lines", showlegend=False,
+                                   line=dict(color=CYAN if sel else "#8dffc0", width=4 if sel else 2), hoverinfo="skip"))
+        if neg.any():
+            fig.add_trace(go.Scatter3d(x=k[neg], y=np.full(int(neg.sum()), days), z=q_k[neg], mode="markers",
+                                       marker=dict(color=RED, size=3), name="negative density", showlegend=False,
+                                       hovertemplate="NEGATIVE density<br>k %{x:.3f}<br>%{z:.4f}<extra></extra>"))
+    fig.update_layout(scene=scene_axes("log-moneyness k", "days to expiry", "density per unit k"))
+    return _layout3d(fig, "vs3d:density",
+                     "Risk-neutral density waterfall · q(k) = K·e^{rT}·∂²C/∂K² · each expiry over its observed range", height)
+
+
+def calendar_surface(model, calendar_grid, height=440):
+    if calendar_grid is None:
+        return None
+    kg, dW = calendar_grid
+    mids = np.array([(a.T + b.T) / 2 * 365 for a, b in zip(model.slices[:-1], model.slices[1:])])
+    m = np.nanmax(np.abs(dW)) if np.isfinite(dW).any() else 1
+    fig = go.Figure(go.Surface(
+        x=kg, y=mids, z=dW, cmin=-m, cmax=m, colorscale=[[0, RED], [0.5, "#06180e"], [1, TEAL]],
+        colorbar=dict(title=dict(text="Δw", font=dict(color=MUTED, size=10)), thickness=10,
+                      tickfont=dict(color=MUTED, size=10)),
+        contours=dict(z=dict(show=True, start=0, end=0, size=1, color=AMBER, width=4)),
+        hovertemplate="k %{x:.3f}<br>pair mid %{y:.0f}d<br>Δw %{z:.6f}<extra></extra>"))
+    fig.update_layout(scene=scene_axes("log-moneyness k", "expiry pair (mid, days)", "Δw = w(T₂) − w(T₁)"))
+    return _layout3d(fig, "vs3d:calendar", "Calendar Δw surface · amber contour = 0 · below 0 = violation", height)
+
+
+def residual_stems(recon: pd.DataFrame, height=460):
+    """Each quote's IV error as a stem from the zero plane at (k, T)."""
+    r = recon[np.isfinite(recon.iv_model)]
+    fig = go.Figure()
+    xs, ys, zs = [], [], []
+    for k, t, e in zip(r.k, r["T"] * 365, r.iv_err_volpts):
+        xs += [k, k, None]
+        ys += [t, t, None]
+        zs += [0, e, None]
+    fig.add_trace(go.Scatter3d(x=xs, y=ys, z=zs, mode="lines", line=dict(color="rgba(141,255,192,0.35)", width=2),
+                               hoverinfo="skip", showlegend=False))
+    for used, name, sym in ((True, "fit set", "circle"), (False, "not fitted", "circle-open")):
+        rr = r[r.used_in_fit == used]
+        if rr.empty:
+            continue
+        fig.add_trace(go.Scatter3d(
+            x=rr.k, y=rr["T"] * 365, z=rr.iv_err_volpts, mode="markers", name=name,
+            marker=dict(size=3.2, symbol=sym, color=np.where(rr.iv_err_volpts >= 0, TEAL, RED)),
+            customdata=np.c_[rr.strike, rr.in_band.astype(float)],
+            hovertemplate="K %{customdata[0]:.2f}<br>%{y:.0f}d<br>model − mid %{z:.3f} vp"
+                          "<br>in band %{customdata[1]:.0f}<extra></extra>"))
+    kk = [float(r.k.min()), float(r.k.max())]
+    tt = [float(r["T"].min() * 365), float(r["T"].max() * 365)]
+    fig.add_trace(go.Surface(x=kk, y=tt, z=[[0, 0], [0, 0]], showscale=False, opacity=0.18, hoverinfo="skip",
+                             colorscale=[[0, "#1f5a3a"], [1, "#1f5a3a"]]))
+    fig.update_layout(scene=scene_axes("log-moneyness k", "days to expiry", "IV error (vol pts)"))
+    return _layout3d(fig, "vs3d:resid", "IV reconstruction error stems · model − mid at (k, T)", height)
+
+
+def book_landscape(history: list, bins_bps: float | None = None, half_width_bps: float | None = None,
+                   n_bins: int = 40, height=460):
+    """Displayed order-book depth over time as terrain: x = distance from the then-current mid in bps,
+    y = seconds ago, z = displayed quantity in that bin. Top-20 levels only (visible resting liquidity,
+    not total supply/demand). Seconds without a book sample stay empty."""
+    if len(history) < 2:
+        return None
+    if half_width_bps is None:
+        # adapt the window to the displayed book's actual reach (99th pct of level distance from mid)
+        offs = [abs(p / mid - 1) * 1e4 for _, mid, bids, asks in history for p, _ in list(bids) + list(asks)]
+        half_width_bps = float(np.percentile(offs, 99)) if offs else 1.0
+        half_width_bps = max(half_width_bps, 1e-3)
+    if bins_bps is None:
+        bins_bps = 2 * half_width_bps / n_bins
+    edges = np.linspace(-half_width_bps, half_width_bps, int(round(2 * half_width_bps / bins_bps)) + 1)
+    centers = (edges[:-1] + edges[1:]) / 2
+    now = history[-1][0]
+    secs = np.arange(history[0][0], now + 1)
+    Z = np.full((len(secs), len(centers)), np.nan)
+    by_sec = {h[0]: h for h in history}
+    for i, sec in enumerate(secs):
+        h = by_sec.get(sec)
+        if h is None:
+            continue
+        _, mid, bids, asks = h
+        row = np.zeros(len(centers))
+        for p, q in list(bids) + list(asks):
+            off = (p / mid - 1) * 1e4
+            j = np.searchsorted(edges, off, side="right") - 1
+            if 0 <= j < len(centers):
+                row[j] += q
+        Z[i] = row
+    side = np.where(centers < 0, -1.0, 1.0)[None, :] * np.ones_like(Z)
+    fig = go.Figure(go.Surface(
+        x=centers, y=secs - now, z=Z, surfacecolor=side * np.sqrt(np.nan_to_num(Z)),
+        colorscale=[[0, TEAL], [0.5, "#04170c"], [1, RED]], showscale=False,
+        contours=dict(z=dict(show=False)), lighting=dict(ambient=0.6, diffuse=0.6, specular=0.15, roughness=0.6),
+        hovertemplate="%{x:+.1f} bps from mid<br>t%{y}s<br>qty %{z:.4g}<extra></extra>"))
+    fig.update_layout(scene=scene_axes("bps from mid (− bids · + asks)", "seconds ago", "displayed qty",
+                                       aspectratio=dict(x=1.4, y=1.5, z=0.55)))
+    return _layout3d(fig, "vs3d:book",
+                     f"Order-book landscape · last {len(secs)}s · displayed top-20 depth · ±{half_width_bps:.3g} bp · bin {bins_bps:.3g} bp", height)

@@ -58,6 +58,16 @@ class CDP:
 
     async def shot(self, name, settle=2.5):
         await asyncio.sleep(settle)
+        await self.js("window.dispatchEvent(new Event('resize')); 1")   # grids re-measure after a tab reveal
+        await asyncio.sleep(1.2)
+        n = await self.js("document.querySelectorAll('[data-testid=stDataFrame]').length") or 0
+        for i in range(n):                  # canvas tables paint lazily: wait for each visible one
+            for _ in range(30):
+                vis = await self.js(f"""(() => {{ const r=document.querySelectorAll('[data-testid=stDataFrame]')[{i}]
+                    .getBoundingClientRect(); return r.bottom > 0 && r.top < {H}; }})()""")
+                if not vis or await self.painted(i):
+                    break
+                await asyncio.sleep(0.3)
         data = (await self.call("Page.captureScreenshot", format="jpeg", quality=88))["data"]
         (OUT / name).write_bytes(base64.b64decode(data))
         print("captured", name)
@@ -79,7 +89,10 @@ class CDP:
         """True if the n-th dataframe canvas region contains light (text) pixels in a fresh capture."""
         box = await self.js(f"""(() => {{ const d=document.querySelectorAll('[data-testid=stDataFrame]')[{testid_index}];
             if(!d) return null; const r=d.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }})()""")
-        if not box or box[2] < 20 or box[3] < 20 or box[1] < 0 or box[1] + box[3] > H:
+        if not box or box[2] < 20 or box[3] < 20:
+            return False
+        box = [box[0], max(box[1], 0), box[2], min(box[1] + box[3], H) - max(box[1], 0)]
+        if box[3] < 20:
             return False
         from io import BytesIO
         from PIL import Image

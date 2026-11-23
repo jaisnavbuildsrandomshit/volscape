@@ -33,6 +33,21 @@ Built with Python, NumPy, SciPy, pandas, Plotly and Streamlit. No accounts, API 
 `python scripts/capture_screenshots.py --live` (headless Edge/Chrome via DevTools). The synthetic views
 use the bundled demo. The live views show the public Deribit and Binance data at the moment of capture.*
 
+## 3D views
+Every 3D view encodes real dimensions of the data; none is decorative.
+- **IV surface** in (k, T, IV), drawn over observed coverage only, with each expiry's own smile as a line.
+- **Risk-neutral density waterfall**: each expiry's discrete density q(k) as a curtain over its observed
+  strike range. Negative samples are marked in red and never clipped.
+- **Calendar Δw surface**: total-variance change between consecutive expiries, with an amber zero
+  contour. Anything below zero is a sampled violation.
+- **IV error stems**: each quote's model-minus-mid error as a stem at its (k, T).
+- **P&L surface** over spot × IV shocks, shown beside the heatmap.
+- **Order-book landscape** in LIVE: displayed top-20 depth over the last ≤180 s, in bins relative to the
+  mid at each second. The window adapts to the book's reach, and missing seconds stay empty.
+
+The layout borrows the HUD framing of terminal UIs and the time × price × size "liquidity landscape"
+used by order-flow tools.
+
 ## Network use
 SURFACE computation never uses the network: Streamlit and Plotly serve their own bundled assets.
 Selecting a `live · deribit BTC/ETH` dataset fetches one snapshot from
@@ -165,10 +180,11 @@ tests/             pytest suite (pricing, IV, data, surface, diagnostics, scenar
 ```
 
 ## Verification
-- `pytest`: 296 tests, all offline:
+- `pytest`: 299 tests, all offline:
   - 267 for the VOLSCAPE core;
-  - 25 for the live reader: ported orderflow parser and state tests, plus LiveHub bridge tests;
-  - 4 for the Deribit adapter, including a full-pipeline round trip that recovers known SVI smiles. They cover known-answer prices and Greeks, parity, IV round trips, limits,
+  - 26 for the live reader: ported orderflow parser and state tests, plus LiveHub bridge and book-history tests;
+  - 4 for the Deribit adapter, including a full-pipeline round trip that recovers known SVI smiles;
+  - 2 checking that the 3D figures faithfully encode the data (binning, gaps, density units). They cover known-answer prices and Greeks, parity, IV round trips, limits,
   finite-difference Greeks, determinism, SVI recovery on SSVI slices, interpolation, known
   calendar/butterfly violations, CSV rejections and duplicates, portfolio accounting, and the
   display-grid no-extrapolation invariant.

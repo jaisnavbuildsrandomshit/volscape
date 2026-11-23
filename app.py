@@ -103,6 +103,18 @@ div[data-testid="stExpander"] summary p { font-size: 0.74rem; letter-spacing: 0.
 [data-testid="stDataFrame"], [data-testid="stDataEditor"] { border: 1px solid var(--line); }
 [data-testid="stAlert"] { border-radius: 0; }
 hr { border-color: var(--line); }
+/* HUD framing: thin corner brackets around every chart panel (no boxes) */
+[data-testid="stPlotlyChart"] { position: relative; }
+[data-testid="stPlotlyChart"]::before, [data-testid="stPlotlyChart"]::after {
+  content: ""; position: absolute; width: 14px; height: 14px; pointer-events: none; z-index: 2; }
+[data-testid="stPlotlyChart"]::before { top: 0; left: 0; border-top: 1px solid var(--g2); border-left: 1px solid var(--g2); }
+[data-testid="stPlotlyChart"]::after { bottom: 0; right: 0; border-bottom: 1px solid var(--g2); border-right: 1px solid var(--g2); }
+/* phosphor glow on live values and the logo accent, nothing else */
+.vs-card .v { text-shadow: 0 0 14px rgba(57,239,139,0.28); }
+.vs-card .v.warn { text-shadow: 0 0 14px rgba(233,181,74,0.25); }
+.vs-logo span { text-shadow: 0 0 18px rgba(57,239,139,0.45); }
+.vs-logo i { animation: none; }
+.stApp { background: radial-gradient(1400px 700px at 60% -20%, rgba(57,239,139,0.05), transparent 60%), var(--bg) !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -428,7 +440,7 @@ with t_cal:
         st.caption("The baseline interpolates the fit set exactly, so its fit-set error is ~0 by construction; "
                    "compare methods on 'all quotes' (includes ITM quotes not used in fitting).")
         st.plotly_chart(ch.per_expiry_error_figure(diag["per_expiry"]), key="perexp", config=PLOT_CFG, theme=None)
-    st.plotly_chart(ch.residual_figure(diag["recon"]), key="resid", config=PLOT_CFG, theme=None)
+    st.plotly_chart(ch.residual_stems(diag["recon"]), key="resid3d", config=PLOT_CFG_3D, theme=None)
     st.markdown('<div class="vs-panel-title">Per-expiry reconstruction errors</div>', unsafe_allow_html=True)
     st.dataframe(diag["per_expiry"], hide_index=True, width="stretch", column_config={
         "expiry": DT(format="YYYY-MM-DD"), "T": NUM(format="%.4f"), "iv_rmse_volpts": NUM(format="%.3f"),
@@ -507,9 +519,9 @@ with t_arb:
                     "worst_dw": NUM("worst Δw", format="%.2e"), "k_at_worst": NUM(format="%.3f")})
                 st.caption("Grid: 101 points over the intersection of the two slices' observed k ranges.")
         with b:
-            fig_cal = ch.calendar_figure(model, dg.calendar_grid(model))
+            fig_cal = ch.calendar_surface(model, dg.calendar_grid(model))
             if fig_cal is not None:
-                st.plotly_chart(fig_cal, key="cal", config=PLOT_CFG, theme=None)
+                st.plotly_chart(fig_cal, key="cal3d", config=PLOT_CFG_3D, theme=None)
         a, b = st.columns([1, 1.25], gap="medium")
         with a:
             st.markdown('<div class="vs-panel-title">Butterfly: call-price monotonicity, convexity, density</div>', unsafe_allow_html=True)
@@ -530,10 +542,13 @@ with t_arb:
                 "mono_quotes": "monotonic viol. (bid>prev ask)", "convex_mid": "convexity viol. (mid)"})
             st.caption("Mid-based violations on raw quotes can be within bid/ask noise; the strict quote test uses tradable prices.")
         with b:
-            if sel in diag["density"]:
-                st.plotly_chart(ch.density_figure(diag["density"][sel], sel), key="dens", config=PLOT_CFG, theme=None)
+            if diag["density"]:
+                st.plotly_chart(ch.density_waterfall(diag["density"], chain, sel), key="dens3d",
+                                config=PLOT_CFG_3D, theme=None)
+                if sel not in diag["density"]:
+                    st.caption("Selected expiry has no density (slice unavailable for this method).")
             else:
-                st.caption("No density for the selected expiry (slice unavailable for this method).")
+                st.caption("No density available for this method.")
 
 with t_risk:
     st.markdown('<div class="vs-note">European legs repriced with BSM under each scenario. P&L = scenario value − initial cost; '
@@ -614,7 +629,7 @@ with t_risk:
             max_days = int(max(l.T for l in legs) * 365) if legs else 0
             hz = st.slider("Time forward (calendar days)", 0, max(max_days + 5, 1), 0, 1,
                            help="Legs reaching expiry within the horizon settle at intrinsic on the scenario spot.")
-            show3d = st.toggle("3D P&L surface", False)
+            show3d = st.toggle("3D P&L surface", True)
         if legs:
             g = portfolio_greeks(legs, model, S0, extrapolate=extrap)
             cost = initial_cost(legs)
@@ -635,7 +650,8 @@ with t_risk:
             vs = np.linspace(-v_rng, v_rng, 21)
             dyns = [STICKY_STRIKE, STICKY_MONEYNESS] if dyn == "compare" else [dyn]
             pnls = {d: scenario_pnl(legs, model, S0, ss, vs, hz, d, extrap) for d in dyns}
-            cols = st.columns(len(dyns) + (1 if dyn == "compare" else 0), gap="small")
+            side_3d = show3d and dyn != "compare"
+            cols = st.columns(len(dyns) + (1 if dyn == "compare" else 0) + (1 if side_3d else 0), gap="small")
             for c, d in zip(cols, dyns):
                 with c:
                     st.plotly_chart(ch.pnl_heatmap(pnls[d], ss, vs, f"P&L · {d} · +{hz}d", cur), key=f"pnl_{d}", config=PLOT_CFG, theme=None)
@@ -648,7 +664,11 @@ with t_risk:
             if n_na:
                 st.caption(f"{n_na} scenario cells are N/A: the required surface point is outside observed coverage "
                            "(enable k-extrapolation to evaluate, explicitly marked) or the shocked IV is ≤ 0.")
-            if show3d:
+            if side_3d:
+                with cols[-1]:
+                    st.plotly_chart(ch.pnl_surface(pnls[dyns[0]], ss, vs, cur, height=420), key="pnl3d",
+                                    config=PLOT_CFG_3D, theme=None)
+            elif show3d:
                 st.plotly_chart(ch.pnl_surface(pnls[dyns[0]], ss, vs, cur), key="pnl3d", config=PLOT_CFG_3D, theme=None)
         else:
             st.info("Add at least one valid leg.")

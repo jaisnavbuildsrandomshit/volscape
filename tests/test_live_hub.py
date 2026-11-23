@@ -37,3 +37,16 @@ def test_reconnect_drops_book_and_event_log_dedupes():
     snap = hub.snapshot()
     assert snap.bids == [] and snap.gaps == 1          # stale book dropped, gap counted once
     assert sum("RECONNECTING" in m for _, m in snap.events) == 1
+
+
+def test_book_history_samples_once_per_second_and_ignores_stale_feeds():
+    hub = LiveHub()
+    hub.gen = 1
+    for uid in range(1, 6):   # 5 snapshots within the same wall second -> one sample
+        hub._on_event(1, parse_message(depth_msg(uid=uid)))
+    snap = hub.snapshot()
+    assert len(snap.book_history) == 1
+    sec, mid, bids, asks = snap.book_history[0]
+    assert mid == 101.0 and bids == [(100.0, 30.0)] and asks == [(102.0, 10.0)]
+    hub._on_event(0, parse_message(depth_msg(uid=9)))    # stale generation never samples
+    assert len(hub.snapshot().book_history) == 1

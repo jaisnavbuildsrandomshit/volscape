@@ -97,6 +97,14 @@ def _live_panel(hub: LiveHub) -> None:
         f'<div class="vs-card"><div class="l">{l}</div><div class="v{" warn" if w else ""}">{v}</div>'
         f'<div class="s">{sub}</div></div>' for l, v, sub, w in cards) + "</div>", unsafe_allow_html=True)
 
+    land = ch.book_landscape(s.book_history)
+    if land is not None:
+        st.plotly_chart(land, key="live_land", config={**PLOT_CFG, "scrollZoom": False}, theme=None)
+        st.markdown('<div class="vs-conv">terrain = displayed top-20 resting quantity per bin around the then-current '
+                    'mid (window adapts to the book&#39;s reach), one sample per second (bounded to 180 s) · empty rows = seconds without a book update · '
+                    'not total supply/demand</div>', unsafe_allow_html=True)
+    else:
+        st.caption("Order-book landscape needs at least 2 seconds of book samples.")
     a, b = st.columns([1, 1.25], gap="medium")
     with a:
         st.plotly_chart(ch.live_depth_figure(s.bids, s.asks), key="live_depth", config=PLOT_CFG, theme=None)

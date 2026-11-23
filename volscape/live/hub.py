@@ -19,6 +19,7 @@ from .markets import MarketBoard
 from .state import SYMBOLS, BookSnapshot, MarketState, Trade
 
 EVENT_LOG_MAX = 60
+BOOK_HISTORY_S = 180   # one displayed-book sample per second, bounded
 
 
 def _f(x):
@@ -55,6 +56,7 @@ class LiveSnapshot:
     yahoo_status: str = "OFF"
     yahoo_error: str = ""
     events: list = field(default_factory=list)
+    book_history: list = field(default_factory=list)   # [(wall_s, mid, bids, asks)] oldest first
 
 
 class LiveHub:
@@ -69,6 +71,7 @@ class LiveHub:
         self.feed_task: asyncio.Task | None = None
         self.board: MarketBoard | None = None
         self.events: deque[tuple[float, str]] = deque(maxlen=EVENT_LOG_MAX)
+        self.book_hist: deque = deque(maxlen=BOOK_HISTORY_S)
 
     # ---------------------------------------------------------------- lifecycle
     @property
@@ -136,6 +139,7 @@ class LiveHub:
         with self.lock:
             self.gen += 1
             self.state.reset(self.symbol)
+            self.book_hist.clear()
             self.status, self.detail = "CONNECTING", ""
             self._log(f"subscribe {self.symbol}")
         gen = self.gen
@@ -159,9 +163,20 @@ class LiveHub:
                 return  # stale feed generation can never contaminate new state
             self.state.note_message(now)
             if isinstance(ev, BookSnapshot):
-                self.state.apply_depth(ev, now)
+                if self.state.apply_depth(ev, now):
+                    self._sample_book()
             elif isinstance(ev, Trade):
                 self.state.apply_trade(ev, now)
+
+    def _sample_book(self) -> None:
+        sec = int(time.time())
+        if self.book_hist and self.book_hist[-1][0] == sec:
+            return
+        mid = self.state.midprice()
+        if mid is None:
+            return
+        self.book_hist.append((sec, float(mid), [(float(p), float(q)) for p, q in self.state.bids],
+                               [(float(p), float(q)) for p, q in self.state.asks]))
 
     def _on_status(self, gen: int, status: Status, detail: str) -> None:
         with self.lock:
@@ -207,4 +222,4 @@ class LiveHub:
                 crypto_status=self.board.crypto_status if self.board else "OFF",
                 yahoo_status=self.board.yahoo_status if self.board else "OFF",
                 yahoo_error=self.board.yahoo_error if self.board else "",
-                events=list(self.events)[-12:][::-1])
+                events=list(self.events)[-12:][::-1], book_history=list(self.book_hist))
