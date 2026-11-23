@@ -289,8 +289,8 @@ elif choice in ("live · NSE (Upstox)", "live · US (Alpaca)"):
                          '<span class="vs-badge vs-imp">[ live snapshot · credentials needed ]</span></div>',
                          unsafe_allow_html=True)
         st.info(
-            f"{exc}. This source needs your own free API credentials, read from environment variables on this "
-            "machine only (never stored, shown or exported).\n\n"
+            f"{exc}. This source needs your own free API credentials, read from environment variables or the "
+            "git-ignored file .streamlit/secrets.toml on this machine (never shown or exported).\n\n"
             + ("**Upstox (NSE):** create an app at upstox.com/developer, complete the login flow to get an access "
                "token (tokens expire daily), then in PowerShell: `$env:UPSTOX_ACCESS_TOKEN = \"<token>\"` and restart "
                "with `.\\start.cmd` from that same window." if nse else

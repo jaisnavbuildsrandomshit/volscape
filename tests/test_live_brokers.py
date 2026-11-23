@@ -98,6 +98,7 @@ def test_alpaca_occ_parse_and_american_requires_explicit_opt_in():
 def test_missing_credentials_raise_clear_error(monkeypatch):
     monkeypatch.delenv("UPSTOX_ACCESS_TOKEN", raising=False)
     monkeypatch.delenv("ALPACA_API_KEY_ID", raising=False)
+    monkeypatch.setenv("VOLSCAPE_NO_SECRETS_FILE", "1")
     with pytest.raises(brokers.MissingCredentials):
         brokers.fetch_upstox("NIFTY 50")
     with pytest.raises(brokers.MissingCredentials):

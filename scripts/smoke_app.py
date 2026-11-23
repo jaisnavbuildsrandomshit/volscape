@@ -45,6 +45,7 @@ def main():
     import os
     for v in ("UPSTOX_ACCESS_TOKEN", "ALPACA_API_KEY_ID", "ALPACA_API_SECRET_KEY"):
         os.environ.pop(v, None)                     # no credentials -> setup guidance, no network call
+    os.environ["VOLSCAPE_NO_SECRETS_FILE"] = "1"   # never use a real local key file in the smoke run
     by_key(at.selectbox, "dataset").set_value("live · NSE (Upstox)").run(); check(at, "NSE without credentials (guidance)")
     assert any("UPSTOX_ACCESS_TOKEN" in i.value for i in at.info), "Upstox setup guidance missing"
     by_key(at.selectbox, "dataset").set_value("live · US (Alpaca)").run(); check(at, "US without credentials (guidance)")

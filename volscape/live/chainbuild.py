@@ -21,6 +21,8 @@ import pandas as pd
 MIN_PAIRS = 3
 N_NEAR = 10            # pairs closest to spot used in the parity regression
 DF_RANGE = (0.80, 1.02)
+RATE_RANGE = (-0.02, 0.20)   # plausible annual rate; outside -> borrow from longer expiries
+RATE_MIN_T = 30 / 365        # expiries used to estimate the reference rate
 
 
 @dataclass
@@ -64,6 +66,17 @@ def build_chain_csv(quotes: pd.DataFrame, spot: float, valuation: pd.Timestamp, 
     q["mid"] = (q.bid + q.ask) / 2
     vt = valuation.tz_convert("UTC").floor("s")
     out, fits, skipped = [], {}, {}
+    # pass 1: parity fit per expiry; implied rates from short expiries are noise-dominated
+    prelim = {}
+    for exp, g in q.groupby("expiry"):
+        T = (exp - vt).total_seconds() / (365 * 86400)
+        piv = g.pivot_table(index="strike", columns="option_type", values="mid", aggfunc="first")
+        if T > 0 and {"C", "P"} <= set(piv.columns):
+            f = parity_forward(piv.index.to_numpy(), piv["C"].to_numpy(), piv["P"].to_numpy(), spot)
+            if f is not None:
+                prelim[exp] = (T, f)
+    good = [-math.log(f.df) / T for T, f in prelim.values() if T >= RATE_MIN_T and RATE_RANGE[0] <= -math.log(f.df) / T <= RATE_RANGE[1]]
+    r_ref = float(np.median(good)) if good else None
     for exp, g in q.groupby("expiry"):
         T = (exp - vt).total_seconds() / (365 * 86400)
         if T <= 0:
@@ -78,9 +91,21 @@ def build_chain_csv(quotes: pd.DataFrame, spot: float, valuation: pd.Timestamp, 
             skipped[exp.date().isoformat()] = f"parity forward not identified (<{MIN_PAIRS} two-sided pairs or implausible DF)"
             continue
         r = -math.log(fit.df) / T
+        borrowed = False
+        if not (RATE_RANGE[0] <= r <= RATE_RANGE[1]):
+            if r_ref is None:
+                skipped[exp.date().isoformat()] = f"implied rate {r:.2%} implausible and no reference rate"
+                continue
+            # keep the market forward; take discounting from the longer-expiry parity rate (disclosed)
+            fwd = (piv["C"] - piv["P"]).dropna()
+            near = fwd.index.to_numpy()[np.argsort(np.abs(fwd.index.to_numpy() - spot))[:N_NEAR]]
+            df_ref = math.exp(-r_ref * T)
+            F = float(np.mean(near + (fwd.loc[near].to_numpy()) / df_ref))
+            fit = ParityFit(df_ref, F, len(near), fit.rmse)
+            r, borrowed = r_ref, True
         qy = r - math.log(fit.forward / spot) / T
         fits[exp.date().isoformat()] = dict(forward=fit.forward, discount_factor=fit.df, rate=r, div_yield=qy,
-                                            n_pairs=fit.n_pairs, parity_rmse=fit.rmse)
+                                            n_pairs=fit.n_pairs, parity_rmse=fit.rmse, rate_borrowed=borrowed)
         for row in g.itertuples(index=False):
             out.append(dict(valuation_time=vt.isoformat(), expiry=exp.isoformat(), strike=float(row.strike),
                             option_type=row.option_type, bid=float(row.bid), ask=float(row.ask), spot=float(spot),

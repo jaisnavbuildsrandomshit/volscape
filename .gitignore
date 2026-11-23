@@ -6,3 +6,4 @@ exports/*
 !exports/synthetic_demo/
 .claude/
 .venv/.installed-requirements
+.streamlit/secrets.toml

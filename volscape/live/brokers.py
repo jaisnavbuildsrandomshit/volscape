@@ -10,13 +10,16 @@
   the explicit European-approximation opt-in. Expiry taken as 16:00 America/New_York.
   The free 'indicative' feed is delayed and modified by Alpaca (their docs); labelled as such.
 
-Credentials are read from environment variables only, sent only to the provider's own host, and
-never logged, displayed or written to exports.
+Credentials are read from environment variables, or else from the git-ignored local file
+.streamlit/secrets.toml; they are sent only to the provider's own host and never logged, displayed or
+written to exports.
 """
 from __future__ import annotations
 
 import json
 import os
+import tomllib
+from pathlib import Path
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -42,8 +45,23 @@ NSE_UNDERLYINGS = {
 US_UNDERLYINGS = ("SPY", "QQQ", "AAPL", "MSFT", "NVDA", "AMZN", "META", "TSLA", "GOOGL", "IWM")
 
 
+SECRETS_FILE = Path(__file__).resolve().parents[2] / ".streamlit" / "secrets.toml"
+
+
 class MissingCredentials(RuntimeError):
     pass
+
+
+def _cred(name: str) -> str:
+    """Environment variable first, then the local git-ignored secrets file (read fresh each call)."""
+    v = os.environ.get(name, "").strip()
+    if v or os.environ.get("VOLSCAPE_NO_SECRETS_FILE"):
+        return v                      # tests/smoke set the flag so a real key file is never used offline
+    try:
+        with open(SECRETS_FILE, "rb") as f:
+            return str(tomllib.load(f).get(name, "")).strip()
+    except (FileNotFoundError, tomllib.TOMLDecodeError):
+        return ""
 
 
 def _get(url: str, headers: dict, timeout: float = 20.0):
@@ -59,7 +77,7 @@ def _get(url: str, headers: dict, timeout: float = 20.0):
 
 # ------------------------------------------------------------------------------------------ Upstox (NSE)
 def upstox_credentials() -> dict:
-    tok = os.environ.get("UPSTOX_ACCESS_TOKEN", "").strip()
+    tok = _cred("UPSTOX_ACCESS_TOKEN")
     if not tok:
         raise MissingCredentials("UPSTOX_ACCESS_TOKEN is not set")
     return {"Authorization": f"Bearer {tok}"}
@@ -100,8 +118,8 @@ def fetch_upstox(name: str, max_expiries: int = 6) -> tuple[bytes, dict]:
 
 # ------------------------------------------------------------------------------------------ Alpaca (US)
 def alpaca_credentials() -> dict:
-    kid = os.environ.get("ALPACA_API_KEY_ID", "").strip()
-    sec = os.environ.get("ALPACA_API_SECRET_KEY", "").strip()
+    kid = _cred("ALPACA_API_KEY_ID")
+    sec = _cred("ALPACA_API_SECRET_KEY")
     if not kid or not sec:
         raise MissingCredentials("ALPACA_API_KEY_ID / ALPACA_API_SECRET_KEY are not set")
     return {"APCA-API-KEY-ID": kid, "APCA-API-SECRET-KEY": sec}
