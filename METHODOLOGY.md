@@ -123,7 +123,21 @@ of arbitrage between or beyond the grid points.
 - **N/A.** A cell shows N/A when the required surface point is outside coverage (with extrapolation
   off) or when the shocked vol is `≤ 0`. Net Greeks use the units in §2, scaled by `qty·mult`.
 
-## 7. Synthetic data
+## 7. Live Deribit option snapshots
+`volscape/live/deribit.py` reads `get_book_summary_by_currency?kind=option`. For each expiry, the
+forward `F_T` is the median instrument `underlying_price`. The spot `S` is the index price. Deribit quotes
+are in coin per unit of underlying, so `USD = coin quote × F_T`. VOLSCAPE then sets `r = 0` and
+`q_T = −ln(F_T/S)/T`, so that `S·e^{(r−q)T} = F_T` exactly. Expiry is 08:00 UTC on the coded date, and `T`
+is measured from the fetch time on ACT/365.
+
+To verify the convention, IVs were re-solved from Deribit mark prices and compared with their published
+`mark_iv`. On a live BTC snapshot the median gap was ≤ 0.2 vol pt per expiry for OTM options (≤ 0.03 for
+tenors beyond a week). The remaining difference reflects seconds of timestamp skew. Rows without an ask
+are skipped and counted. A missing bid is written as 0 and flagged `ZERO_BID`. Everything else goes
+through the same validation, IV, SVI and diagnostic code as any CSV. Deribit options are European and
+cash-settled, which is consistent with the BSM convention used here.
+
+## 8. Synthetic data
 The generator is SSVI (Gatheral & Jacquier, 2014):
 - `w(k,T) = θ/2·(1 + ρφk + √((φk+ρ)² + 1 − ρ²))`;
 - `θ(T) = σ_ATM(T)²T` with `σ_ATM(T) = v_∞ + (v₀ − v_∞)e^{−T/τ}`;

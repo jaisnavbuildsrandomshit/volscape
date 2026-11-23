@@ -2,9 +2,10 @@
 
 A local options-volatility research workstation with two workspaces:
 
-- **SURFACE** (offline): validate an option chain, solve bid/mid/ask implied vols, fit an inspectable
-  surface (total-variance interpolation baseline and raw SVI), audit it with static-arbitrage
-  diagnostics, and stress a small European portfolio.
+- **SURFACE**: validate an option chain, solve bid/mid/ask implied vols, fit an inspectable surface
+  (total-variance interpolation baseline and raw SVI), audit it with static-arbitrage diagnostics, and
+  stress a small European portfolio. It works on bundled synthetic chains, your own CSV, or a **live
+  snapshot of the Deribit BTC/ETH option book** (public API, no keys).
 - **LIVE** (opt-in): real-time Binance Spot order flow (book depth, trade tape, signed flow, VWAP) plus a
   delayed watchlist of crypto, NIFTY/SENSEX, US and global indices and stocks. It uses the market-data
   reader from [orderflow-terminal](https://github.com/jaisnavbuildsrandomshit/orderflow-terminal), vendored
@@ -12,24 +13,32 @@ A local options-volatility research workstation with two workspaces:
 
 Built with Python, NumPy, SciPy, pandas, Plotly and Streamlit. No accounts, API keys or paid services.
 
-> The bundled option chains are **SYNTHETIC**, generated from a disclosed SSVI model with a fixed seed.
-> LIVE data is real **spot** and equity market data; it contains no option quotes and never feeds the
-> synthetic surface or the risk scenarios. Each view is labelled with its data kind.
+> Data kinds are labelled everywhere:
+> - **SYNTHETIC**: the bundled option chains, generated from a disclosed SSVI model with a fixed seed.
+> - **LIVE SNAPSHOT**: real Deribit option quotes, fetched on demand. They are not streamed; press
+>   *Refresh snapshot* to fetch again.
+> - **LIVE**: real spot and equity market data from Binance and Yahoo. It contains no option quotes.
 
 ![SURFACE workspace](docs/screenshots/workstation_surface.jpg)
 
-| LIVE order flow | Smile · term structure · calibration |
+| Live Deribit BTC surface | LIVE order flow |
 |---|---|
-| ![](docs/screenshots/live_orderflow.jpg) | ![](docs/screenshots/smile_term_calibration.jpg) |
-| **Arbitrage diagnostics** | **Risk playground** |
-| ![](docs/screenshots/arbitrage_diagnostics.jpg) | ![](docs/screenshots/risk_playground.jpg) |
+| ![](docs/screenshots/live_deribit_surface.jpg) | ![](docs/screenshots/live_orderflow.jpg) |
+| **Smile · term structure · readouts** | **Arbitrage diagnostics** |
+| ![](docs/screenshots/smile_term_calibration.jpg) | ![](docs/screenshots/arbitrage_diagnostics.jpg) |
+| **Risk playground** | **Quote quality** |
+| ![](docs/screenshots/risk_playground.jpg) | ![](docs/screenshots/quote_quality.jpg) |
 
-*All screenshots were captured from the running app. SURFACE uses the bundled synthetic demo; LIVE
-shows the public BTCUSDT feed at the moment of capture. The smile, arbitrage and risk captures predate
-the latest layout pass (legends moved below charts, controls moved to a strip).*
+*All screenshots are real captures of the running app at 1600×1000, made with
+`python scripts/capture_screenshots.py --live` (headless Edge/Chrome via DevTools). The synthetic views
+use the bundled demo. The live views show the public Deribit and Binance data at the moment of capture.*
 
 ## Network use
 SURFACE computation never uses the network: Streamlit and Plotly serve their own bundled assets.
+Selecting a `live · deribit BTC/ETH` dataset fetches one snapshot from
+`www.deribit.com/api/v2/public/get_book_summary_by_currency`. It fetches again only when you press
+*Refresh snapshot*. If the fetch fails, the error is shown and no other dataset is substituted.
+
 LIVE opens connections **only after you press Connect**, and only to:
 - `data-stream.binance.vision` / `stream.binance.com` (WebSocket, public market data);
 - `data-api.binance.vision` / `api.binance.com` (REST klines for sparklines);
@@ -67,7 +76,7 @@ python -m venv .venv
 
 ## Workflow
 1. **Load**: bundled synthetic demo, clean fixture, deliberately dirty fixture, a freshly seeded
-   synthetic chain, or **import a CSV**. A failed import is reported with row-level reasons. The demo is
+   synthetic chain, a **live Deribit BTC/ETH option snapshot**, or **import a CSV**. A failed import is reported with row-level reasons. The demo is
    never substituted silently.
 2. **Validate**: required columns and types, timezone-aware timestamps, positive spot and strike,
    `ask ≥ bid`, one snapshot spot and valuation time, rate and dividend consistent within each expiry,
@@ -147,7 +156,8 @@ volscape/
   pipeline.py      CSV bytes → validated chain → IV → fits → diagnostics
   charts.py        themed Plotly figures and standalone HTML export
   export.py        experiment record (JSON) and grid exports
-  live/            vendored orderflow-terminal reader (feed, state, markets) + hub.py thread bridge
+  live/            vendored orderflow-terminal reader (feed, state, markets), hub.py thread bridge,
+                   deribit.py (public option-book snapshot -> VOLSCAPE CSV schema)
   live_ui.py       LIVE workspace (Streamlit fragment)
 app.py             Streamlit workstation
 scripts/           generate_data.py, run_experiment.py, smoke_app.py
@@ -155,8 +165,10 @@ tests/             pytest suite (pricing, IV, data, surface, diagnostics, scenar
 ```
 
 ## Verification
-- `pytest`: 292 tests (267 VOLSCAPE plus 25 for the live reader: ported orderflow parser and state
-  tests and LiveHub bridge tests, all offline). They cover known-answer prices and Greeks, parity, IV round trips, limits,
+- `pytest`: 296 tests, all offline:
+  - 267 for the VOLSCAPE core;
+  - 25 for the live reader: ported orderflow parser and state tests, plus LiveHub bridge tests;
+  - 4 for the Deribit adapter, including a full-pipeline round trip that recovers known SVI smiles. They cover known-answer prices and Greeks, parity, IV round trips, limits,
   finite-difference Greeks, determinism, SVI recovery on SSVI slices, interpolation, known
   calendar/butterfly violations, CSV rejections and duplicates, portfolio accounting, and the
   display-grid no-extrapolation invariant.
@@ -178,5 +190,11 @@ tests/             pytest suite (pricing, IV, data, surface, diagnostics, scenar
   P&L excludes financing, fees and margin.
 - The synthetic bid/ask widths are stylised and make no claim of realism.
 - SVI calibration on the bundled chain takes about 5 seconds and is cached per dataset and settings.
-- LIVE is spot and equity data only. Yahoo quotes are delayed and unofficial. One live connection is
+- The live option surface is a snapshot rather than a stream.
+  - The Deribit coin→USD conversion uses each expiry's forward with `r = 0` and the basis as `q`.
+  - Re-solving Deribit's mark prices under this convention reproduces their mark IVs to ≤ 0.2 vol pt
+    for OTM quotes, measured on a live snapshot.
+  - Very short expiries often fail SVI (POOR_FIT) and are shown as rejected.
+  - Contract size is 1 coin, so the risk playground defaults its multiplier to 1 for Deribit data.
+- LIVE spot data has no option quotes. Yahoo quotes are delayed and unofficial. One live connection is
   shared per server process, which suits a single-user local app.

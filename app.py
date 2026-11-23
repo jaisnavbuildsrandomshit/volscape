@@ -28,6 +28,7 @@ from volscape.scenarios import (STICKY_MONEYNESS, STICKY_STRIKE, initial_cost, l
 from volscape.surface import FitSettings, SurfaceModel
 from volscape.synthetic import SyntheticSpec, generate_chain
 from volscape.live_ui import get_hub, render_live_workspace
+from volscape.live.deribit import fetch_book, to_chain
 
 ROOT = Path(__file__).resolve().parent
 st.set_page_config(page_title="VOLSCAPE", layout="wide", initial_sidebar_state="collapsed")
@@ -163,6 +164,13 @@ def cached_pipeline(content: bytes, label: str, synthetic: bool, vkey: tuple, iv
     return run_pipeline(content, label, synthetic, settings)
 
 
+@st.cache_data(show_spinner=False, max_entries=8)
+def deribit_snapshot(currency: str, nonce: int):
+    """One Deribit option-book snapshot per (currency, refresh press). Network only when called."""
+    rows = fetch_book(currency)
+    return to_chain(rows, datetime.now(timezone.utc), currency)
+
+
 @st.cache_data(show_spinner=False)
 def generated_csv(seed: int, noise: float) -> bytes:
     return generate_chain(SyntheticSpec(seed=seed, iv_noise_volpts=noise)).to_csv(index=False).encode()
@@ -194,9 +202,10 @@ with st.sidebar:
         min_pts = int(st.number_input("Min distinct strikes per slice", 6, 40, 7))
         max_rmse = st.number_input("Reject slice if IV RMSE > (vol pts)", 0.1, 20.0, 2.5, 0.1)
         n_ms = int(st.slider("Deterministic multistarts", 1, 12, 12))
-    st.caption("SURFACE computation never uses the network. LIVE opens connections to public Binance (real time) "
-               "and Yahoo Finance (delayed) endpoints only after you press Connect; they stay open, in every "
-               "workspace, until you press Disconnect.")
+    st.caption("Network use is opt-in. SURFACE fetches a Deribit public option-book snapshot only when a "
+               "'live · deribit' dataset is selected (or refreshed); all other datasets are offline. LIVE opens "
+               "Binance (real time) and Yahoo (delayed) connections only after Connect; they stay open in every "
+               "workspace until Disconnect.")
 
 if "cam_rev" not in st.session_state:
     st.session_state.cam_rev = 0
@@ -215,7 +224,7 @@ if ws == "LIVE":
     st.stop()
 
 with h_ds:
-    choice = st.selectbox("Dataset", list(BUNDLED) + ["synthetic · seed", "import csv"], index=0,
+    choice = st.selectbox("Dataset", list(BUNDLED) + ["live · deribit BTC", "live · deribit ETH", "synthetic · seed", "import csv"], index=0,
                           label_visibility="collapsed", key="dataset")
 seed, spec_dict = None, None
 content, label, synthetic = None, "", True
@@ -223,6 +232,26 @@ if choice in BUNDLED:
     path, label, seed = BUNDLED[choice]
     content = (ROOT / path).read_bytes()
     spec_dict = SyntheticSpec(seed=7, iv_noise_volpts=0.15 if "demo" in path else 0.0).to_dict() if "dirty" not in path else None
+elif choice.startswith("live · deribit"):
+    synthetic = False
+    cur = choice.split()[-1]
+    nonce_key = f"deribit_nonce_{cur}"
+    st.session_state.setdefault(nonce_key, 0)
+    r1, r2 = st.columns([5, 1], vertical_alignment="center")
+    if r2.button("Refresh snapshot", width="stretch"):
+        st.session_state[nonce_key] += 1
+    try:
+        with st.spinner(f"Fetching Deribit {cur} option book (public API)…"):
+            content, dnotes = deribit_snapshot(cur, st.session_state[nonce_key])
+        label = f"LIVE SNAPSHOT · Deribit {cur} options · public API · fetched {dnotes['fetched_at'][11:19]} UTC"
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(dnotes["fetched_at"])).total_seconds()
+        r1.markdown(f'<div class="vs-conv">Deribit public option book · {dnotes["n_raw"]} instruments · '
+                    f'{dnotes["n_no_ask"]} without an ask skipped · index {dnotes["index_price"]:,.2f} USD · '
+                    f'snapshot age {age:,.0f}s (not streaming; press refresh) · quotes converted coin→USD at each '
+                    f'expiry&#39;s forward, r = 0, basis as q (see METHODOLOGY)</div>', unsafe_allow_html=True)
+    except Exception as exc:  # noqa: BLE001 - network/HTTP problems are shown, never replaced with other data
+        st.error(f"Deribit snapshot unavailable: {type(exc).__name__}: {exc}. No other dataset is substituted.")
+        st.stop()
 elif choice == "synthetic · seed":
     g1, g2, _ = st.columns([1, 2, 3])
     seed = int(g1.number_input("Seed", 0, 10_000_000, 7, 1))
@@ -258,7 +287,7 @@ with st.spinner("Validating quotes, solving implied vols, calibrating SVI slices
                           fkey, float(min_vega))
 val = res.validation
 meta = val.meta
-badge = '<span class="vs-badge vs-syn">[ synthetic · not market data ]</span>' if meta.is_synthetic else \
+badge = '<span class="vs-badge vs-syn">[ synthetic · not market data ]</span>' if meta.is_synthetic else     '<span class="vs-badge vs-imp">[ live snapshot · deribit · market data ]</span>' if label.startswith("LIVE SNAPSHOT") else \
     '<span class="vs-badge vs-imp">[ imported observations ]</span>'
 vt = meta.valuation_time.strftime("%Y-%m-%d %H:%M UTC") if meta.valuation_time is not None else "—"
 live_on = get_hub().connected
@@ -524,7 +553,8 @@ with t_risk:
             near = lambda x: float(strikes[np.argmin(np.abs(strikes - x))])
             legs0 = pd.DataFrame(dict(type=["Call", "Call", "Put"], expiry=[f"{e60:%Y-%m-%d}"] * 3,
                                       strike=[near(F60), near(F60 * 1.05), near(F60 * 0.95)],
-                                      quantity=[1.0, -1.0, 1.0], premium=[np.nan] * 3, multiplier=[100.0] * 3))
+                                      quantity=[1.0, -1.0, 1.0], premium=[np.nan] * 3,
+                                      multiplier=[1.0 if label.startswith("LIVE SNAPSHOT") else 100.0] * 3))
             st.session_state.legs_df = legs0
             st.session_state.legs_key = key
             st.session_state.legs_ver = st.session_state.get("legs_ver", 0) + 1

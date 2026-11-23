@@ -112,7 +112,7 @@ def _live_panel(hub: LiveHub) -> None:
                          height=330, column_config={
                              "price": st.column_config.NumberColumn(format=f"%.{dp}f"),
                              "qty": st.column_config.NumberColumn(format="%.5f"),
-                             "notional": st.column_config.NumberColumn(format="%,.0f")})
+                             "notional": st.column_config.NumberColumn(format="%.2f")})
         else:
             st.caption("No trades received yet.")
     with b:

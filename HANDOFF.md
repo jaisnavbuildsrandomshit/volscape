@@ -26,4 +26,6 @@ colorscale.
   1600x1000. The dirty fixture and the import-empty state are covered by the headless smoke run only.
 - LIVE: the watchlist `MarketBoard` mutates quotes on the feed thread without the hub lock (simple
   attribute writes; snapshot copies them). Good enough for display; revisit if more logic is added.
-- A live options source (e.g. a public exchange options API) would be needed for a live IV surface.
+- Live IV surface: `live · deribit BTC/ETH` datasets fetch a Deribit public option-book snapshot
+  (`volscape/live/deribit.py`, convention in METHODOLOGY §7). It is snapshot-only (refresh button), not streaming.
+- Screenshots: `python scripts/capture_screenshots.py --live` with the app running (headless Edge/Chrome).
