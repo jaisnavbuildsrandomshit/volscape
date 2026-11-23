@@ -184,7 +184,9 @@ tests/             pytest suite (pricing, IV, data, surface, diagnostics, scenar
   - 267 for the VOLSCAPE core;
   - 26 for the live reader: ported orderflow parser and state tests, plus LiveHub bridge and book-history tests;
   - 4 for the Deribit adapter, including a full-pipeline round trip that recovers known SVI smiles;
-  - 2 checking that the 3D figures faithfully encode the data (binning, gaps, density units). They cover known-answer prices and Greeks, parity, IV round trips, limits,
+  - 2 checking that the 3D figures faithfully encode the data (binning, gaps, density units).
+
+  Together they cover known-answer prices and Greeks, parity, IV round trips, limits,
   finite-difference Greeks, determinism, SVI recovery on SSVI slices, interpolation, known
   calendar/butterfly violations, CSV rejections and duplicates, portfolio accounting, and the
   display-grid no-extrapolation invariant.
