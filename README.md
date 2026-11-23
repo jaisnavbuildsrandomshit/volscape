@@ -1,21 +1,42 @@
 # VOLSCAPE
 
-A local, offline options-volatility research workstation: validate an option chain, solve bid/mid/ask
-implied vols, fit an inspectable surface (total-variance interpolation baseline and raw SVI), audit it
-with static-arbitrage diagnostics, and stress a small European portfolio. Built with Python, NumPy,
-SciPy, pandas, Plotly and Streamlit. Everything runs on your machine, with no accounts, APIs or network
-services at runtime.
+A local options-volatility research workstation with two workspaces:
 
-> The bundled datasets are **SYNTHETIC**, generated from a disclosed SSVI model with a fixed seed.
-> They are not market data, and the interface labels them that way everywhere.
+- **SURFACE** (offline): validate an option chain, solve bid/mid/ask implied vols, fit an inspectable
+  surface (total-variance interpolation baseline and raw SVI), audit it with static-arbitrage
+  diagnostics, and stress a small European portfolio.
+- **LIVE** (opt-in): real-time Binance Spot order flow (book depth, trade tape, signed flow, VWAP) plus a
+  delayed watchlist of crypto, NIFTY/SENSEX, US and global indices and stocks. It uses the market-data
+  reader from [orderflow-terminal](https://github.com/jaisnavbuildsrandomshit/orderflow-terminal), vendored
+  under `volscape/live/` (MIT).
 
-![3D surface workstation](docs/screenshots/workstation_surface.jpg)
+Built with Python, NumPy, SciPy, pandas, Plotly and Streamlit. No accounts, API keys or paid services.
 
-| Smile · term structure · calibration | Arbitrage diagnostics | Risk playground |
-|---|---|---|
-| ![](docs/screenshots/smile_term_calibration.jpg) | ![](docs/screenshots/arbitrage_diagnostics.jpg) | ![](docs/screenshots/risk_playground.jpg) |
+> The bundled option chains are **SYNTHETIC**, generated from a disclosed SSVI model with a fixed seed.
+> LIVE data is real **spot** and equity market data; it contains no option quotes and never feeds the
+> synthetic surface or the risk scenarios. Each view is labelled with its data kind.
 
-*Screenshots were captured from the running app (bundled synthetic demo, 1600×1000 viewport).*
+![SURFACE workspace](docs/screenshots/workstation_surface.jpg)
+
+| LIVE order flow | Smile · term structure · calibration |
+|---|---|
+| ![](docs/screenshots/live_orderflow.jpg) | ![](docs/screenshots/smile_term_calibration.jpg) |
+| **Arbitrage diagnostics** | **Risk playground** |
+| ![](docs/screenshots/arbitrage_diagnostics.jpg) | ![](docs/screenshots/risk_playground.jpg) |
+
+*All screenshots were captured from the running app. SURFACE uses the bundled synthetic demo; LIVE
+shows the public BTCUSDT feed at the moment of capture. The smile, arbitrage and risk captures predate
+the latest layout pass (legends moved below charts, controls moved to a strip).*
+
+## Network use
+SURFACE is fully offline. Streamlit and Plotly serve their own bundled assets, and nothing is fetched.
+LIVE opens connections **only after you press Connect**, and only to:
+- `data-stream.binance.vision` / `stream.binance.com` (WebSocket, public market data);
+- `data-api.binance.vision` / `api.binance.com` (REST klines for sparklines);
+- `query1/query2.finance.yahoo.com` (delayed quotes).
+
+Press Disconnect to close them. If Binance is restricted in your region, the status line shows the
+HTTP error and values stay N/A or blank; nothing is filled in.
 
 ## Quick start
 
@@ -31,7 +52,8 @@ In `cmd.exe`, type `.\start.cmd` with the path: a bare `start.cmd` is parsed as 
 ```bash
 chmod +x start.sh && ./start.sh
 ```
-Then open http://127.0.0.1:8501. Both scripts locate their own folder, pick a suitable Python, create
+Then open http://127.0.0.1:8501. Use the SURFACE / LIVE switch at top right; advanced validation,
+IV-solver and SVI settings are in the collapsible sidebar (») . Both scripts locate their own folder, pick a suitable Python, create
 `.venv`, install `requirements.txt` only when it changes, and print actionable errors. They never change
 global settings. Run the test suite with `.\start.cmd test` or `./start.sh test`.
 
@@ -57,8 +79,9 @@ python -m venv .venv
 4. **Fit**: baseline linear-in-total-variance interpolation, or raw SVI per expiry. SVI uses bounded
    trust-region least squares from a deterministic multistart grid. Settings, status, residuals and
    parameters are recorded, and unsupported or degenerate slices are rejected.
-5. **Explore**: the 3D surface (rotate, zoom, contours, wireframe, observed points, colorscales,
-   camera reset), a linked smile and ATM term structure, and four tabs: Calibration, Quote Quality,
+5. **Explore**: a control strip (method, z/x axes, colorscale, expiry, layer chips for points, slices,
+   contours, wireframe and k-extrapolation, camera reset) above a full-width 3D surface, headline
+   readouts, a linked smile and ATM term structure, and tabs for Calibration, Quote Quality,
    Arbitrage Diagnostics and Risk Playground.
 6. **Export**: surface grid, SVI parameters, accepted and rejected quotes, error and arbitrage
    diagnostics as CSV, standalone interactive HTML charts with plotly.js embedded, and a
@@ -94,6 +117,21 @@ Controls: drag to orbit, right-drag to pan, and zoom with the toolbar's zoom mod
 scrolls the page rather than the camera. The camera persists across control changes until you press
 **Reset camera**. The toolbar camera icon exports a 3× PNG.
 
+## LIVE workspace
+- **Status line**: feed state (CONNECTING / LIVE / RECONNECTING / OFFLINE), endpoint, receive age (amber
+  when no message for more than 5 s), message and trade rates, gap, duplicate and missed-trade counters,
+  watchlist feed states, and a UTC clock.
+- **Readouts**: last trade, mid, spread in basis points and absolute, top-20 displayed-quantity imbalance,
+  VWAP since connect, and 60 s signed flow (labelled "warming up" until the window is full).
+- **Charts**: cumulative displayed depth (top levels only, not a full supply/demand curve), 1 s closes
+  with a VWAP line, and per-second signed aggressor flow.
+- **Tape and log**: the newest trades, plus a deduplicated feed-event log.
+- **Watchlist**: crypto in real time from Binance and equities delayed from Yahoo. It shows change, the
+  position in the day range and a trend sparkline. Missing values stay blank and are never filled in.
+
+The feed runs on a background asyncio thread (`volscape/live/hub.py`). Streamlit reads locked snapshots
+in a fragment that refreshes once a second, so the SURFACE workspace never reruns on a tick.
+
 ## Architecture
 ```
 volscape/
@@ -108,17 +146,23 @@ volscape/
   pipeline.py      CSV bytes → validated chain → IV → fits → diagnostics
   charts.py        themed Plotly figures and standalone HTML export
   export.py        experiment record (JSON) and grid exports
+  live/            vendored orderflow-terminal reader (feed, state, markets) + hub.py thread bridge
+  live_ui.py       LIVE workspace (Streamlit fragment)
 app.py             Streamlit workstation
 scripts/           generate_data.py, run_experiment.py, smoke_app.py
 tests/             pytest suite (pricing, IV, data, surface, diagnostics, scenarios)
 ```
 
 ## Verification
-- `pytest`: 267 tests. They cover known-answer prices and Greeks, parity, IV round trips, limits,
+- `pytest`: 292 tests (267 VOLSCAPE plus 25 for the live reader: ported orderflow parser and state
+  tests and LiveHub bridge tests, all offline). They cover known-answer prices and Greeks, parity, IV round trips, limits,
   finite-difference Greeks, determinism, SVI recovery on SSVI slices, interpolation, known
   calendar/butterfly violations, CSV rejections and duplicates, portfolio accounting, and the
   display-grid no-extrapolation invariant.
-- `python scripts/smoke_app.py`: a headless Streamlit run through every main interaction.
+- `python scripts/smoke_app.py`: a headless Streamlit run through every main interaction, including
+  the LIVE workspace staying disconnected until Connect. It opens no network connections.
+- The LIVE feed was exercised against the real public endpoints on Windows. It connected, switched
+  symbol and disconnected cleanly.
 - Manual inspection in a Chromium-based browser on Windows, including camera persistence and the
   screenshots above. `start.sh` has not been executed on macOS or Linux.
 
@@ -133,3 +177,5 @@ tests/             pytest suite (pricing, IV, data, surface, diagnostics, scenar
   P&L excludes financing, fees and margin.
 - The synthetic bid/ask widths are stylised and make no claim of realism.
 - SVI calibration on the bundled chain takes about 5 seconds and is cached per dataset and settings.
+- LIVE is spot and equity data only. Yahoo quotes are delayed and unofficial. One live connection is
+  shared per server process, which suits a single-user local app.

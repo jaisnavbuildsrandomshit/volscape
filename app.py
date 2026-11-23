@@ -27,9 +27,10 @@ from volscape.scenarios import (STICKY_MONEYNESS, STICKY_STRIKE, initial_cost, l
                                 portfolio_greeks, scenario_pnl)
 from volscape.surface import FitSettings, SurfaceModel
 from volscape.synthetic import SyntheticSpec, generate_chain
+from volscape.live_ui import render_live_workspace
 
 ROOT = Path(__file__).resolve().parent
-st.set_page_config(page_title="VOLSCAPE", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="VOLSCAPE", layout="wide", initial_sidebar_state="collapsed")
 
 # ------------------------------------------------------------------------------------------ style
 st.markdown("""
@@ -56,22 +57,29 @@ p, label, span, div { letter-spacing: 0.01em; }
 .vs-meta { color: var(--faint); font-size:0.74rem; display:flex; gap:18px; flex-wrap:wrap; }
 .vs-meta b { color: var(--dim); font-weight:500; }
 .vs-conv { color: var(--faint); font-size:0.68rem; margin: 0 0 12px 0; }
-.vs-cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap:0; margin-bottom: 10px;
+.vs-cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap:0; margin-bottom: 10px;
             border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
 .vs-card { padding:8px 14px 9px 12px; border-left:1px solid var(--line); background: transparent; }
 .vs-card:first-child { border-left: none; padding-left: 2px; }
 .vs-card .l { color: var(--faint); font-size:0.64rem; letter-spacing:0.16em; text-transform:uppercase; }
-.vs-card .v { color: var(--g); font-size:1.18rem; font-weight:500; font-variant-numeric: tabular-nums; margin-top:3px; }
+.vs-card .v { white-space: nowrap; color: var(--g); font-size:1.08rem; font-weight:500; font-variant-numeric: tabular-nums; margin-top:3px; }
 .vs-card .s { color: var(--faint); font-size:0.64rem; margin-top:2px; }
 .vs-card .v.warn { color: var(--amber); }
-[data-testid="stHorizontalBlock"]:has(.vs-ctrl) > div:first-child { flex: 0 0 230px !important; min-width: 230px !important; max-width: 250px;
-  border-right: 1px solid var(--line); padding-right: 14px; }
-[data-testid="stHorizontalBlock"]:has(.vs-ctrl) > div:nth-child(2) { flex: 1 1 0 !important; min-width: 0 !important; }
-@media (max-width: 1150px) {
-  [data-testid="stHorizontalBlock"]:has(.vs-ctrl) { flex-wrap: wrap !important; }
-  [data-testid="stHorizontalBlock"]:has(.vs-ctrl) > div:first-child { flex: 1 1 100% !important; max-width: 100%; border-right:none; }
-  [data-testid="stHorizontalBlock"]:has(.vs-ctrl) > div:nth-child(2) { flex: 1 1 100% !important; }
-}
+/* segmented controls & pills: square hairline chips */
+[data-testid="stButtonGroup"] button { border-radius: 0 !important; border: 1px solid var(--line2) !important;
+  background: transparent !important; color: var(--dim) !important; font-size: 0.72rem !important;
+  letter-spacing: 0.10em; text-transform: uppercase; min-height: 1.9rem; }
+[data-testid="stButtonGroup"] button[kind$="Active"], [data-testid="stButtonGroup"] button[aria-checked="true"],
+[data-testid="stButtonGroup"] button[aria-pressed="true"] { border-color: var(--g) !important; color: var(--g) !important;
+  background: rgba(57,239,139,0.06) !important; }
+[data-testid="stRadio"] label p { font-size: 0.78rem; }
+/* workspace switch: radio rendered as two hairline tabs */
+.st-key-ws [role="radiogroup"] { gap: 0 !important; justify-content: flex-end; flex-wrap: nowrap !important; }
+.st-key-ws [role="radiogroup"] > label { border: 1px solid var(--line2); padding: 4px 14px; margin: 0 !important; }
+.st-key-ws [role="radiogroup"] > label:has(input:checked) { border-color: var(--g); background: rgba(57,239,139,0.06); }
+.st-key-ws [role="radiogroup"] > label:has(input:checked) p { color: var(--g); }
+.st-key-ws [role="radiogroup"] > label > div:first-child { display: none; }
+.st-key-ws p { letter-spacing: 0.16em; font-size: 0.72rem !important; }
 .vs-panel-title { color: var(--dim); font-size:0.66rem; letter-spacing:0.18em; text-transform:uppercase; margin: 2px 0 6px 0; }
 .vs-panel-title::before { content: "// "; color: var(--g2); }
 .vs-note { color: var(--dim); font-size:0.72rem; border-left: 1px solid var(--amber); padding: 3px 10px; margin: 6px 0 10px 0; }
@@ -86,7 +94,7 @@ p, label, span, div { letter-spacing: 0.01em; }
 [data-baseweb="tab-border"] { display: none; }
 div[data-testid="stExpander"] details { border: 1px solid var(--line); border-radius: 0; background: transparent; }
 div[data-testid="stExpander"] summary p { font-size: 0.74rem; letter-spacing: 0.08em; color: var(--dim); }
-.stDownloadButton button, .stButton button { border:1px solid var(--line2); border-radius: 0; background: transparent;
+.stDownloadButton button, .stButton button { border:1px solid var(--line2); border-radius: 0; background: transparent; white-space: nowrap;
   color: var(--text); font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase; }
 .stDownloadButton button:hover, .stButton button:hover { border-color: var(--g); color: var(--g); background: rgba(57,239,139,0.04); }
 [data-baseweb="select"] > div, [data-baseweb="input"], .stNumberInput input { border-radius: 0 !important; border-color: var(--line2) !important;
@@ -164,33 +172,9 @@ def fmt(x, spec="{:.2f}", na="N/A"):
     return na if x is None or not np.isfinite(x) else spec.format(x)
 
 
-# ------------------------------------------------------------------------------------------ sidebar
+# ------------------------------------------------------------------------------------------ sidebar (advanced)
 with st.sidebar:
-    st.markdown('<div class="vs-panel-title">Dataset</div>', unsafe_allow_html=True)
-    choice = st.radio("Source", list(BUNDLED) + ["synthetic · seed", "import csv"], index=0,
-                      label_visibility="collapsed")
-    seed, spec_dict = None, None
-    content, label, synthetic = None, "", True
-    if choice in BUNDLED:
-        path, label, seed = BUNDLED[choice]
-        content = (ROOT / path).read_bytes()
-        spec_dict = SyntheticSpec(seed=7, iv_noise_volpts=0.15 if "demo" in path else 0.0).to_dict() if "dirty" not in path else None
-    elif choice == "synthetic · seed":
-        seed = int(st.number_input("Seed", 0, 10_000_000, 7, 1))
-        noise = st.slider("IV noise (vol points, Gaussian)", 0.0, 2.0, 0.15, 0.05)
-        content = generated_csv(seed, noise)
-        label = f"SYNTHETIC · generated in-app (SSVI, seed {seed}, {noise:.2f} vol-pt noise)"
-        spec_dict = SyntheticSpec(seed=seed, iv_noise_volpts=noise).to_dict()
-    else:
-        synthetic = False
-        up = st.file_uploader("Option chain CSV", type=["csv"])
-        st.download_button("Download CSV template", TEMPLATE_CSV, "volscape_template.csv", "text/csv")
-        st.download_button("Download example chain", (ROOT / "data/example_chain.csv").read_bytes(),
-                           "volscape_example_chain.csv", "text/csv")
-        if up is not None:
-            content = up.getvalue()
-            label = f"IMPORTED · {up.name}"
-
+    st.markdown('<div class="vs-panel-title">Advanced settings</div>', unsafe_allow_html=True)
     with st.expander("Validation rules"):
         max_spread = st.slider("Wide-spread flag: (ask−bid)/mid >", 0.1, 2.0, 0.60, 0.05)
         reject_wide = st.checkbox("Reject wide spreads (instead of flag)", False)
@@ -210,15 +194,56 @@ with st.sidebar:
         min_pts = int(st.number_input("Min distinct strikes per slice", 6, 40, 7))
         max_rmse = st.number_input("Reject slice if IV RMSE > (vol pts)", 0.1, 20.0, 2.5, 0.1)
         n_ms = int(st.slider("Deterministic multistarts", 1, 12, 12))
-    st.caption("All computation is local. No network services are used.")
+    st.caption("SURFACE runs fully offline. LIVE opens connections to public Binance (real time) and "
+               "Yahoo Finance (delayed) endpoints only after you press Connect.")
 
 if "cam_rev" not in st.session_state:
     st.session_state.cam_rev = 0
 
+# ------------------------------------------------------------------------------------------ header row
+h_left, h_ds, h_ws = st.columns([2.5, 1.5, 1.3], gap="small", vertical_alignment="center")
+with h_ws:
+    ws = st.radio("Workspace", ["SURFACE", "LIVE"], horizontal=True, key="ws", label_visibility="collapsed")
+head_ph = h_left.empty()
+
+if ws == "LIVE":
+    head_ph.markdown('<div class="vs-head"><div class="vs-logo">VOL<span>SCAPE</span><i>_</i></div>'
+                     '<span class="vs-badge vs-imp">[ live · market data ]</span>'
+                     '</div>', unsafe_allow_html=True)
+    render_live_workspace()
+    st.stop()
+
+with h_ds:
+    choice = st.selectbox("Dataset", list(BUNDLED) + ["synthetic · seed", "import csv"], index=0,
+                          label_visibility="collapsed", key="dataset")
+seed, spec_dict = None, None
+content, label, synthetic = None, "", True
+if choice in BUNDLED:
+    path, label, seed = BUNDLED[choice]
+    content = (ROOT / path).read_bytes()
+    spec_dict = SyntheticSpec(seed=7, iv_noise_volpts=0.15 if "demo" in path else 0.0).to_dict() if "dirty" not in path else None
+elif choice == "synthetic · seed":
+    g1, g2, _ = st.columns([1, 2, 3])
+    seed = int(g1.number_input("Seed", 0, 10_000_000, 7, 1))
+    noise = g2.slider("IV noise (vol points, Gaussian)", 0.0, 2.0, 0.15, 0.05)
+    content = generated_csv(seed, noise)
+    label = f"SYNTHETIC · generated in-app (SSVI, seed {seed}, {noise:.2f} vol-pt noise)"
+    spec_dict = SyntheticSpec(seed=seed, iv_noise_volpts=noise).to_dict()
+else:
+    synthetic = False
+    u1, u2, u3 = st.columns([3, 1, 1], vertical_alignment="bottom")
+    up = u1.file_uploader("Option chain CSV", type=["csv"])
+    u2.download_button("CSV template", TEMPLATE_CSV, "volscape_template.csv", "text/csv", width="stretch")
+    u3.download_button("Example chain", (ROOT / "data/example_chain.csv").read_bytes(),
+                       "volscape_example_chain.csv", "text/csv", width="stretch")
+    if up is not None:
+        content = up.getvalue()
+        label = f"IMPORTED · {up.name}"
+
 # ------------------------------------------------------------------------------------------ pipeline
 if content is None:
-    st.markdown('<div class="vs-head"><div class="vs-logo">VOL<span>SCAPE</span><i>_</i></div>'
-                '<span class="vs-badge vs-imp">[ import · awaiting csv ]</span></div>', unsafe_allow_html=True)
+    head_ph.markdown('<div class="vs-head"><div class="vs-logo">VOL<span>SCAPE</span><i>_</i></div>'
+                     '<span class="vs-badge vs-imp">[ import · awaiting csv ]</span></div>', unsafe_allow_html=True)
     st.info("Upload a CSV with columns: valuation_time, expiry, strike, option_type, bid, ask, spot, rate, "
             "dividend_yield (optional: underlying, currency, volume, open_interest, exercise_style). "
             "Timestamps must include a timezone offset, e.g. 2026-06-15T20:00:00+00:00. "
@@ -234,13 +259,13 @@ val = res.validation
 meta = val.meta
 badge = '<span class="vs-badge vs-syn">[ synthetic · not market data ]</span>' if meta.is_synthetic else \
     '<span class="vs-badge vs-imp">[ imported observations ]</span>'
-vt = meta.valuation_time.strftime("%Y-%m-%d %H:%M:%S UTC") if meta.valuation_time is not None else "—"
-st.markdown(f"""
-<div class="vs-head"><div class="vs-logo">VOL<span>SCAPE</span><i>_</i></div>{badge}
-<div class="vs-meta"><span>source <b>{html.escape(meta.source_label)}</b></span>
-<span>underlying <b>{html.escape(meta.underlying)}</b></span><span>currency <b>{html.escape(meta.currency)}</b></span>
-<span>valuation <b>{vt}</b></span><span>spot <b>{fmt(meta.spot, '{:,.4f}', '—')}</b></span>
-<span>input sha256 <b>{meta.input_sha256[:12]}…</b></span></div></div>
+vt = meta.valuation_time.strftime("%Y-%m-%d %H:%M UTC") if meta.valuation_time is not None else "—"
+head_ph.markdown(f'<div class="vs-head"><div class="vs-logo">VOL<span>SCAPE</span><i>_</i></div>{badge}</div>',
+                 unsafe_allow_html=True)
+st.markdown(f"""<div class="vs-meta"><span>src <b>{html.escape(meta.source_label)}</b></span>
+<span>und <b>{html.escape(meta.underlying)}</b></span><span>ccy <b>{html.escape(meta.currency)}</b></span>
+<span>t₀ <b>{vt}</b></span><span>S <b>{fmt(meta.spot, '{:,.4f}', '—')}</b></span>
+<span>sha256 <b>{meta.input_sha256[:12]}…</b></span></div>
 <div class="vs-conv">vp = vol points · model: {html.escape(meta.model_convention)} · {html.escape(meta.exercise_note)}</div>
 """, unsafe_allow_html=True)
 
@@ -260,67 +285,65 @@ for m in res.messages:
 chain = res.chain
 expiries = sorted(chain.expiry.unique())
 
-# ------------------------------------------------------------------------------------------ main controls
-c_ctrl, c_surf = st.columns([1, 4.4], gap="medium")
-with c_ctrl:
-    st.markdown('<div class="vs-panel-title vs-ctrl">Surface</div>', unsafe_allow_html=True)
-    methods = [m for m, mod in (("svi", res.svi), ("baseline", res.baseline)) if mod is not None and mod.available]
-    if not methods:
-        st.error("No surface can be built: fewer than two usable maturities.")
-    method = st.radio("Method", methods or ["svi"], format_func={"svi": "raw SVI", "baseline": "linear w"}.get)
-    z_mode = st.radio("Z axis", ["iv", "w"], horizontal=True, format_func={"iv": "IV %", "w": "w = IV²T"}.get)
-    x_mode = st.selectbox("X axis", ["k", "moneyness", "strike"], format_func=ch.X_LABEL.get)
-    cscale = st.selectbox("Colorscale", list(ch.COLORSCALES))
-    show_pts = st.toggle("Observed points", True)
-    wire = st.toggle("Wireframe", False)
-    contours = st.toggle("Contours", True)
-    extrap = st.toggle("Extrapolate in k", False, help="Off by default. Extrapolated regions are drawn as a translucent "
-                       "grey sheet and dashed smile segments. No extrapolation in maturity is ever performed.")
-    default_exp = int(np.argmin([abs((e - meta.valuation_time).days - 30) for e in expiries]))
-    sel = st.selectbox("Inspect expiry", expiries, index=default_exp,
-                       format_func=lambda e: f"{e:%Y-%m-%d} · {(e - meta.valuation_time).total_seconds() / 86400:.0f}d")
-    if st.button("Reset camera", width="stretch"):
-        st.session_state.cam_rev += 1
+# ------------------------------------------------------------------------------------------ control strip
+methods = [m for m, mod in (("svi", res.svi), ("baseline", res.baseline)) if mod is not None and mod.available]
+if not methods:
+    st.error("No surface can be built: fewer than two usable maturities.")
+s1, s2, s3, s4, s5 = st.columns([1.15, 1.0, 1.25, 1.0, 1.35], gap="small", vertical_alignment="bottom")
+method = s1.radio("Method", methods or ["svi"], horizontal=True, format_func={"svi": "SVI", "baseline": "linear w"}.get)
+z_mode = s2.radio("Z axis", ["iv", "w"], horizontal=True, format_func={"iv": "IV %", "w": "w"}.get)
+x_mode = s3.selectbox("X axis", ["k", "moneyness", "strike"],
+                      format_func={"k": "k = ln(K/F)", "moneyness": "K/F", "strike": "strike K"}.get)
+cscale = s4.selectbox("Colorscale", list(ch.COLORSCALES))
+default_exp = int(np.argmin([abs((e - meta.valuation_time).days - 30) for e in expiries]))
+sel = s5.selectbox("Inspect expiry", expiries, index=default_exp,
+                   format_func=lambda e: f"{e:%Y-%m-%d} · {(e - meta.valuation_time).total_seconds() / 86400:.0f}d")
+l1, l2 = st.columns([4.2, 1.2], gap="small", vertical_alignment="center")
+layers = l1.pills("Layers", ["points", "slices", "contours", "wireframe", "extrapolate k"], selection_mode="multi",
+                  default=["points", "slices", "contours"], label_visibility="collapsed", key="layers") or []
+show_pts, show_slices, contours = "points" in layers, "slices" in layers, "contours" in layers
+wire, extrap = "wireframe" in layers, "extrapolate k" in layers
+if l2.button("Reset camera", width="stretch", help="Restore the default 3D view"):
+    st.session_state.cam_rev += 1
 
 base_model = res.model(method)
 model = SurfaceModel(method, base_model.slices, extrapolate_k=extrap) if base_model is not None else None
 diag = res.diagnostics(method)
 hd = diag["headline"]
 
-with c_surf:
-    cards = [
-        ("ATM IV · 30D", fmt(hd["atm_iv_30d"] * 100, "{:.2f}%"), "fwd ATM · k=0", False),
-        ("Skew · 30D", fmt(hd["skew_30d_volpts"], "{:+.2f}"), "σ(−.10)−σ(+.10) · vp", False),
-        ("Term slope", fmt(hd["term_slope_volpts"], "{:+.2f}"), f"{hd['term_slope_T'] * 365:.0f}d−30d ATM · vp"
-         if np.isfinite(hd["term_slope_T"]) else "unavailable", False),
-        ("Calibration RMSE", fmt(diag["aggregate"]["iv_rmse_volpts"], "{:.3f}"), f"vp · {method} · fit set",
-         diag["aggregate"]["iv_rmse_volpts"] > 1 if np.isfinite(diag["aggregate"]["iv_rmse_volpts"]) else True),
-        ("Valid quotes", f"{len(chain)} / {val.n_input}", f"{len(val.rejected)} rej · {int((chain.iv_mid_status == 'OK').sum())} iv ok",
-         len(val.rejected) > 0),
-        ("SVI slices", f"{sum(f.usable for f in res.fits)} / {len(res.fits)}", "usable / tried",
-         any(not f.usable for f in res.fits)),
-    ]
-    st.markdown('<div class="vs-cards">' + "".join(
-        f'<div class="vs-card"><div class="l">{l}</div><div class="v{" warn" if w else ""}">{v}</div><div class="s">{s}</div></div>'
-        for l, v, s, w in cards) + "</div>", unsafe_allow_html=True)
-    if model is not None and model.available:
-        fig3d = ch.surface_figure(model, chain, res.obs, x_mode=x_mode, z_mode=z_mode, colorscale=cscale,
-                                  show_points=show_pts, wireframe=wire, contours=contours, highlight_expiry=sel,
-                                  uirevision=f"cam{st.session_state.cam_rev}", height=640)
-        st.plotly_chart(fig3d, key="surface3d", config=PLOT_CFG_3D, theme=None)
-        st.markdown('<div class="vs-conv">sheet = k range observed in BOTH adjacent expiries (linear in w across T) · '
-                    'lines = each expiry&#39;s fit over its own observed range · fins = coverage that neighbours lack</div>',
-                    unsafe_allow_html=True)
-        st.markdown('<div class="vs-conv">drag = orbit · right-drag = pan · zoom: toolbar ⌕ zoom mode, then drag · '
-                    'wheel scrolls the page · camera persists across control changes until “reset camera”</div>',
-                    unsafe_allow_html=True)
-    else:
-        fig3d = None
-        st.warning("Surface unavailable for this method — see messages above and the Calibration tab.")
+cards = [
+    ("ATM IV · 30D", fmt(hd["atm_iv_30d"] * 100, "{:.2f}%"), "fwd ATM · k=0", False),
+    ("Skew · 30D", fmt(hd["skew_30d_volpts"], "{:+.2f}"), "σ(−.10)−σ(+.10) · vp", False),
+    ("Term slope", fmt(hd["term_slope_volpts"], "{:+.2f}"), f"{hd['term_slope_T'] * 365:.0f}d−30d ATM · vp"
+     if np.isfinite(hd["term_slope_T"]) else "unavailable", False),
+    ("Calibration RMSE", fmt(diag["aggregate"]["iv_rmse_volpts"], "{:.3f}"), f"vp · {method} · fit set",
+     diag["aggregate"]["iv_rmse_volpts"] > 1 if np.isfinite(diag["aggregate"]["iv_rmse_volpts"]) else True),
+    ("Valid quotes", f"{len(chain)} / {val.n_input}", f"{len(val.rejected)} rej · {int((chain.iv_mid_status == 'OK').sum())} iv ok",
+     len(val.rejected) > 0),
+    ("SVI slices", f"{sum(f.usable for f in res.fits)} / {len(res.fits)}", "usable / tried",
+     any(not f.usable for f in res.fits)),
+]
+if model is not None and model.available:
+    fig3d = ch.surface_figure(model, chain, res.obs, x_mode=x_mode, z_mode=z_mode, colorscale=cscale,
+                              show_points=show_pts, wireframe=wire, contours=contours, highlight_expiry=sel,
+                              show_slices=show_slices, uirevision=f"cam{st.session_state.cam_rev}", height=600)
+    st.plotly_chart(fig3d, key="surface3d", config=PLOT_CFG_3D, theme=None)
+    st.markdown('<div class="vs-conv">sheet = k range observed in BOTH adjacent expiries (linear in w across T) · '
+                'slices = each expiry&#39;s fit over its own observed range · drag = orbit · right-drag = pan · '
+                'zoom = toolbar zoom mode · wheel scrolls the page · camera persists until reset</div>',
+                unsafe_allow_html=True)
+else:
+    fig3d = None
+    st.warning("Surface unavailable for this method — see messages above and the Calibration tab.")
+
+st.markdown('<div class="vs-cards">' + "".join(
+    f'<div class="vs-card"><div class="l">{l}</div><div class="v{" warn" if w else ""}">{v}</div><div class="s">{s}</div></div>'
+    for l, v, s, w in cards) + "</div>", unsafe_allow_html=True)
 
 c_smile, c_term = st.columns(2, gap="medium")
 with c_smile:
-    sm_x = st.radio("Smile axis", ["k", "moneyness", "strike"], horizontal=True, format_func=ch.X_LABEL.get, key="smx")
+    sm_x = st.radio("Smile axis", ["k", "moneyness", "strike"], horizontal=True,
+                    format_func={"k": "k", "moneyness": "K/F", "strike": "K"}.get, key="smx")
     fig_smile = ch.smile_figure(res, sel, sm_x, show_baseline=True, extrapolate=extrap)
     st.plotly_chart(fig_smile, key="smile", config=PLOT_CFG, theme=None)
 with c_term:

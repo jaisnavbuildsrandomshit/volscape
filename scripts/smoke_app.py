@@ -1,5 +1,5 @@
-"""Headless smoke test of the Streamlit app (no browser): runs the script through key interactions
-and fails on any uncaught exception.    python scripts/smoke_app.py"""
+"""Headless smoke test of the Streamlit app (no browser, no network): runs the script through key
+interactions and fails on any uncaught exception.    python scripts/smoke_app.py"""
 from __future__ import annotations
 
 import sys
@@ -14,6 +14,10 @@ def by_label(items, label):
     return next(x for x in items if x.label == label)
 
 
+def by_key(items, key):
+    return next(x for x in items if x.key == key)
+
+
 def check(at, step):
     exc = [e.value for e in at.exception]
     print(f"{step:<48} exceptions={len(exc)} errors={len(at.error)} warnings={len(at.warning)}")
@@ -26,19 +30,23 @@ def main():
     at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=300).run()
     check(at, "initial load (bundled synthetic demo)")
     by_label(at.radio, "Method").set_value("baseline").run(); check(at, "method = baseline")
-    by_label(at.toggle, "Extrapolate in k").set_value(True).run(); check(at, "extrapolation on")
-    by_label(at.toggle, "Wireframe").set_value(True).run(); check(at, "wireframe on")
+    by_key(at.button_group, "layers").set_value(["points", "slices", "contours", "wireframe", "extrapolate k"]).run()
+    check(at, "layers: wireframe + extrapolation on")
     by_label(at.radio, "Z axis").set_value("w").run(); check(at, "z = total variance")
     by_label(at.selectbox, "X axis").set_value("strike").run(); check(at, "x = strike")
     by_label(at.radio, "Method").set_value("svi").run(); check(at, "method = svi")
+    by_key(at.button_group, "layers").set_value([]).run(); check(at, "layers: all off")
     by_label(at.radio, "Surface dynamics").set_value("compare").run(); check(at, "risk: compare dynamics")
     by_label(at.slider, "Time forward (calendar days)").set_value(70).run(); check(at, "risk: horizon beyond expiry")
     by_label(at.toggle, "3D P&L surface").set_value(True).run(); check(at, "risk: 3D P&L")
     by_label(at.button, "Reset camera").click().run(); check(at, "reset camera")
-    at.sidebar.radio[0].set_value("synthetic · dirty").run(); check(at, "dirty fixture")
-    at.sidebar.radio[0].set_value("synthetic · seed").run(); check(at, "generated synthetic seed 7")
-    at.sidebar.radio[0].set_value("import csv").run(); check(at, "import mode without file (no demo substitution)")
+    by_key(at.selectbox, "dataset").set_value("synthetic · dirty").run(); check(at, "dirty fixture")
+    by_key(at.selectbox, "dataset").set_value("synthetic · seed").run(); check(at, "generated synthetic seed 7")
+    by_key(at.selectbox, "dataset").set_value("import csv").run(); check(at, "import mode without file (no demo substitution)")
     assert any("never substituted" in i.value for i in at.info), "import empty state missing"
+    by_key(at.radio, "ws").set_value("LIVE").run(); check(at, "LIVE workspace (not connected, no network)")
+    assert any("Not connected" in m.value for m in at.markdown), "LIVE must not auto-connect"
+    by_key(at.radio, "ws").set_value("SURFACE").run(); check(at, "back to SURFACE")
     print("SMOKE OK")
 
 

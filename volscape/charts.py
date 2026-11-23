@@ -25,6 +25,9 @@ COLORSCALES = {
     "Abyss": [[0, "#081a2e"], [0.25, "#0b3b5c"], [0.5, "#0f766e"], [0.75, "#2dd4bf"], [1, "#f0f9c8"]],
     "Viridis": "Viridis", "Cividis": "Cividis", "Ice": "ice", "Plasma": "Plasma", "Thermal": "thermal",
 }
+# markers need a scale whose low end is still visible on the near-black background
+DOTS = [[0, "#2a7a50"], [0.5, "#39ef8b"], [1, "#d9ffe9"]]
+
 X_LABEL = {"k": "log-moneyness k = ln(K/F)", "moneyness": "moneyness K/F", "strike": "strike K"}
 
 
@@ -36,12 +39,13 @@ def _axis(title, **kw):
 def base_layout(fig, height=360, title=None, **kw):
     fig.update_layout(
         height=height, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family=FONT, color=TEXT, size=11), margin=dict(l=56, r=18, t=70 if title else 30, b=48),
+        font=dict(family=FONT, color=TEXT, size=11), margin=dict(l=56, r=18, t=44 if title else 18, b=96),
         # title pinned to the top of the figure; legend sits on its own row between title and plot
         title=dict(text=title, font=dict(size=12, color=TEXT), x=0.0, xanchor="left", xref="paper",
                    y=0.985, yref="container", yanchor="top") if title else None,
+        # legend under the x-axis title: wraps freely at narrow widths without covering the title/plot
         legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color=MUTED, size=10), orientation="h",
-                    yanchor="bottom", y=1.02, xanchor="left", x=0.0),
+                    yanchor="top", y=-0.2, xanchor="left", x=0.0),
         hoverlabel=dict(bgcolor="#03100a", bordercolor=AXIS, font=dict(family=FONT, color=TEXT, size=12)),
         **kw)
     return fig
@@ -63,7 +67,7 @@ def x_transform(k, fwd, mode):
 
 def surface_figure(model: SurfaceModel, chain: pd.DataFrame, obs: pd.DataFrame, *, x_mode="k", z_mode="iv",
                    colorscale="Phosphor", show_points=True, wireframe=False, contours=True,
-                   highlight_expiry=None, uirevision="cam", height=640):
+                   highlight_expiry=None, show_slices=True, uirevision="cam", height=640):
     grids = model.grid(n_k=71, n_t=48)
     fwd_of = _rq_interp(chain)
     conv = (lambda iv, T: iv * 100) if z_mode == "iv" else (lambda iv, T: iv ** 2 * T)
@@ -113,16 +117,17 @@ def surface_figure(model: SurfaceModel, chain: pd.DataFrame, obs: pd.DataFrame, 
                           "}<br>bid/ask IV %{customdata[2]:.2f} / %{customdata[3]:.2f}<extra>observed</extra>"))
     # each expiry's fitted smile over ITS OWN observed k range: shows where coverage extends beyond
     # the range shared with neighbouring expiries (the surface sheet only spans the shared range)
-    xs, ys, zs = [], [], []
-    for s in model.slices:
-        lo, hi = model.k_range(s)
-        kk = np.linspace(lo, hi, 60)
-        iv = np.sqrt(np.maximum(model.slice_w(s, kk, False), 0) / s.T)
-        xs += list(x_transform(kk, fwd_of(s.T), x_mode)) + [None]
-        ys += [s.T * 365] * 60 + [None]
-        zs += list(conv(iv, s.T)) + [None]
-    fig.add_trace(go.Scatter3d(x=xs, y=ys, z=zs, mode="lines", name="fitted slice (observed range)",
-                               line=dict(color="rgba(141,255,192,0.55)", width=2), hoverinfo="skip"))
+    if show_slices:
+        xs, ys, zs = [], [], []
+        for s in model.slices:
+            lo, hi = model.k_range(s)
+            kk = np.linspace(lo, hi, 60)
+            iv = np.sqrt(np.maximum(model.slice_w(s, kk, False), 0) / s.T)
+            xs += list(x_transform(kk, fwd_of(s.T), x_mode)) + [None]
+            ys += [s.T * 365] * 60 + [None]
+            zs += list(conv(iv, s.T)) + [None]
+        fig.add_trace(go.Scatter3d(x=xs, y=ys, z=zs, mode="lines", name="fitted slice (observed range)",
+                                   line=dict(color="rgba(141,255,192,0.55)", width=2), hoverinfo="skip"))
     if highlight_expiry is not None:
         s = next((s for s in model.slices if s.expiry == highlight_expiry), None)
         if s is not None:
@@ -138,7 +143,7 @@ def surface_figure(model: SurfaceModel, chain: pd.DataFrame, obs: pd.DataFrame, 
     base_layout(fig, height=height)
     fig.update_layout(
         meta="vs3d:surface", uirevision=uirevision, margin=dict(l=0, r=0, t=8, b=0),
-        legend=dict(x=0.01, y=0.99, xanchor="left", yanchor="top", orientation="v", bgcolor="rgba(0,0,0,0)"),
+        legend=dict(x=0.0, y=0.0, xanchor="left", yanchor="bottom", orientation="h", bgcolor="rgba(0,0,0,0)"),
         scene=dict(xaxis=sc_axis(X_LABEL[x_mode]), yaxis=sc_axis("days to expiry (ACT/365)"), zaxis=sc_axis(ztitle),
                    aspectmode="manual", aspectratio=dict(x=1.45, y=1.45, z=0.8), bgcolor=BG,
                    camera=dict(eye=dict(x=-1.3, y=-1.35, z=0.72), center=dict(x=0, y=0, z=-0.1)),
@@ -146,7 +151,7 @@ def surface_figure(model: SurfaceModel, chain: pd.DataFrame, obs: pd.DataFrame, 
     return fig
 
 
-def smile_figure(res, expiry, x_mode="k", show_baseline=True, extrapolate=False, height=380):
+def smile_figure(res, expiry, x_mode="k", show_baseline=True, extrapolate=False, height=430):
     ch = res.chain[(res.chain.expiry == expiry)]
     used = set(zip(res.obs.expiry, res.obs.strike, res.obs.option_type))
     ch = ch.assign(used=[(e, k, t) in used for e, k, t in zip(ch.expiry, ch.strike, ch.option_type)])
@@ -202,7 +207,7 @@ def smile_figure(res, expiry, x_mode="k", show_baseline=True, extrapolate=False,
     return fig
 
 
-def term_figure(res, selected=None, height=380):
+def term_figure(res, selected=None, height=430):
     fig = go.Figure()
     for model, name, color, dash in ((res.svi, "SVI ATM (k=0)", CYAN, "solid"), (res.baseline, "baseline ATM (k=0)", VIOLET, "dot")):
         if model is None or not model.slices:
@@ -237,7 +242,7 @@ def residual_figure(recon: pd.DataFrame, height=360):
             continue
         fig.add_trace(go.Scatter(
             x=rr.k, y=rr.iv_err_volpts, mode="markers", name=name, opacity=op,
-            marker=dict(size=6, color=rr["T"] * 365, colorscale=COLORSCALES["Phosphor"], showscale=used,
+            marker=dict(size=6, color=rr["T"] * 365, colorscale=DOTS, showscale=used,
                         colorbar=dict(title=dict(text="days", font=dict(color=MUTED, size=10)), thickness=10,
                                       tickfont=dict(color=MUTED, size=10)) if used else None,
                         symbol="circle" if used else "circle-open"),
@@ -268,7 +273,7 @@ def spread_figure(chain: pd.DataFrame, height=340):
     c = chain[np.isfinite(chain.iv_bid) & np.isfinite(chain.iv_ask)]
     fig = go.Figure(go.Scatter(
         x=c.k, y=(c.iv_ask - c.iv_bid) * 100, mode="markers",
-        marker=dict(size=6, color=c["T"] * 365, colorscale=COLORSCALES["Phosphor"], showscale=True,
+        marker=dict(size=6, color=c["T"] * 365, colorscale=DOTS, showscale=True,
                     colorbar=dict(title=dict(text="days", font=dict(color=MUTED, size=10)), thickness=10,
                                   tickfont=dict(color=MUTED, size=10))),
         customdata=np.c_[c.strike, c.option_type, c.rel_spread * 100],
@@ -359,3 +364,52 @@ def standalone_html(fig, title):
     f.update_layout(paper_bgcolor=BG, title=dict(text=title, font=dict(color=TEXT, size=14), x=0.01))
     return f.to_html(include_plotlyjs=True, full_html=True, config={"displaylogo": False,
                                                                     "toImageButtonOptions": {"format": "png", "scale": 3}})
+
+
+# ----------------------------------------------------------------------------- live market charts
+def live_depth_figure(bids, asks, height=300):
+    """Cumulative DISPLAYED depth (top levels only) as step lines: not a full supply/demand curve."""
+    fig = go.Figure()
+    if bids:
+        px_b = [p for p, _ in bids]
+        cum_b = np.cumsum([q for _, q in bids])
+        fig.add_trace(go.Scatter(x=px_b, y=cum_b, mode="lines", line=dict(color=TEAL, width=1.4, shape="hv"),
+                                 fill="tozeroy", fillcolor="rgba(57,239,139,0.07)", name="bids (cum)",
+                                 hovertemplate="%{x:,.6g}<br>cum qty %{y:,.6g}<extra>bids</extra>"))
+    if asks:
+        px_a = [p for p, _ in asks]
+        cum_a = np.cumsum([q for _, q in asks])
+        fig.add_trace(go.Scatter(x=px_a, y=cum_a, mode="lines", line=dict(color=RED, width=1.4, shape="hv"),
+                                 fill="tozeroy", fillcolor="rgba(255,91,96,0.06)", name="asks (cum)",
+                                 hovertemplate="%{x:,.6g}<br>cum qty %{y:,.6g}<extra>asks</extra>"))
+    base_layout(fig, height=height, title="Displayed depth · cum qty")
+    fig.update_xaxes(**_axis("price"))
+    fig.update_yaxes(**_axis("cumulative base qty"))
+    return fig
+
+
+def live_price_figure(prices, vwap=None, height=300):
+    fig = go.Figure()
+    n = len(prices)
+    x = np.arange(-n + 1, 1) if n else []
+    fig.add_trace(go.Scatter(x=x, y=prices, mode="lines", line=dict(color=TEXT, width=1.2), name="last trade (1s close)",
+                             hovertemplate="t%{x}s<br>%{y:,.6g}<extra></extra>"))
+    if vwap is not None and n:
+        fig.add_trace(go.Scatter(x=[x[0], x[-1]], y=[vwap, vwap], mode="lines", name="session VWAP",
+                                 line=dict(color=AMBER, width=1, dash="dot"), hoverinfo="skip"))
+    base_layout(fig, height=height, title=f"Price · last {n}s · 1s closes")
+    fig.update_xaxes(**_axis("seconds from now"))
+    fig.update_yaxes(**_axis("price"))
+    return fig
+
+
+def live_flow_figure(flows, height=240):
+    n = len(flows)
+    x = np.arange(-n + 1, 1)
+    fig = go.Figure(go.Bar(x=x, y=flows, marker_color=[TEAL if v >= 0 else RED for v in flows], marker_line_width=0,
+                           hovertemplate="t%{x}s<br>net %{y:,.0f}<extra></extra>"))
+    base_layout(fig, height=height, title="Signed flow / s · buy − sell aggressor notional")
+    fig.update_xaxes(**_axis("seconds from now"))
+    fig.update_yaxes(**_axis("quote notional"))
+    fig.update_layout(bargap=0.15)
+    return fig

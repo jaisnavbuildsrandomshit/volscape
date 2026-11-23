@@ -2,3 +2,5 @@
 *.sh text eol=lf
 *.cmd text eol=crlf
 *.jpg binary
+exports/** linguist-generated
+*.html linguist-generated

@@ -6,7 +6,7 @@ The UI uses a minimal "phosphor" terminal theme with hairline separators, monosp
 colorscale.
 
 ## Commands (last run results)
-- `pytest`: 267 passed.
+- `pytest`: see the verification section of README.md for the latest count.
 - `python scripts/smoke_app.py`: SMOKE OK. This is a headless Streamlit run through every main interaction.
 - `python scripts/run_experiment.py`: regenerates `exports/synthetic_demo/` and `docs/RESULTS_SYNTHETIC.md`.
 - `.\start.cmd test` (Windows): 267 passed, exit 0. `start.sh` has LF endings but has not been executed on macOS/Linux.
@@ -22,5 +22,8 @@ colorscale.
 
 ## Known issues / next steps
 - No joint SSVI/eSSVI calibration across expiries yet; slices are fitted independently.
-- The Quote Quality and Export tabs, the dirty fixture and the import-empty state were checked through
-  the headless smoke run plus a brief manual look, not in a full visual review.
+- All SURFACE tabs and the LIVE workspace were viewed in the browser at pane width (~660–1024 px) and at
+  1600x1000. The dirty fixture and the import-empty state are covered by the headless smoke run only.
+- LIVE: the watchlist `MarketBoard` mutates quotes on the feed thread without the hub lock (simple
+  attribute writes; snapshot copies them). Good enough for display; revisit if more logic is added.
+- A live options source (e.g. a public exchange options API) would be needed for a live IV surface.
