@@ -21,19 +21,16 @@ Built with Python, NumPy, SciPy, pandas, Plotly and Streamlit. No accounts, API 
 >   *Refresh snapshot* to fetch again.
 > - **LIVE**: real spot and equity market data from Binance and Yahoo. It contains no option quotes.
 
-![SURFACE workspace](docs/screenshots/workstation_surface.jpg)
+![3D implied-vol surface](docs/screenshots/workstation_surface.jpg)
 
-| Live Deribit BTC surface | LIVE order flow |
+| Live BTC option surface (Deribit) | Live crypto: 24h candles + 3D order book |
 |---|---|
-| ![](docs/screenshots/live_deribit_surface.jpg) | ![](docs/screenshots/live_orderflow.jpg) |
-| **Smile · term structure · readouts** | **Arbitrage diagnostics** |
-| ![](docs/screenshots/smile_term_calibration.jpg) | ![](docs/screenshots/arbitrage_diagnostics.jpg) |
-| **Risk playground** | **Quote quality** |
-| ![](docs/screenshots/risk_playground.jpg) | ![](docs/screenshots/quote_quality.jpg) |
+| ![](docs/screenshots/live_deribit_surface.jpg) | ![](docs/screenshots/live_crypto_panel.jpg) |
 
-*All screenshots are real captures of the running app at 1600×1000, made with
-`python scripts/capture_screenshots.py --live` (headless Edge/Chrome via DevTools). The synthetic views
-use the bundled demo. The live views show the public Deribit and Binance data at the moment of capture.*
+![Risk-neutral density waterfall](docs/screenshots/density_waterfall.jpg)
+
+*Real captures of the running app (`python scripts/capture_screenshots.py --live`). Live views show public
+Deribit/Binance data at capture time; the surface and density use the bundled synthetic demo.*
 
 ## 3D views
 Every 3D view encodes real dimensions of the data; none is decorative.

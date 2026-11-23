@@ -140,39 +140,41 @@ async def run(live: bool):
             await c.wait_for("document.querySelectorAll('.js-plotly-plot').length >= 3", 120)
             await asyncio.sleep(4)
             await c.shot("workstation_surface.jpg")
-            await c.scroll_to_text("Smile axis", -150)
-            await c.shot("smile_term_calibration.jpg")
-            for tab, name, anchor in (("Arbitrage Diagnostics", "arbitrage_diagnostics.jpg", "Finite-grid checks"),
-                                      ("Risk Playground", "risk_playground.jpg", "LEGS"),
-                                      ("Quote Quality", "quote_quality.jpg", "input rows")):
-                await c.click_text(tab)
-                await asyncio.sleep(2)
-                await c.scroll_to_text(anchor, -60)
-                await c.shot(name, 3)
+            await c.click_text("Arbitrage Diagnostics")
+            await asyncio.sleep(2)
+            await c.scroll_to_text("Risk-neutral density waterfall", -40)
+            await c.shot("density_waterfall.jpg", 3)
             if live:
                 await c.js("window.scrollTo(0,0)")
-                await c.click_text("Calibration")
                 await c.pick_option("Dataset", "live · deribit BTC")
                 await c.wait_for("document.body.innerText.toLowerCase().includes('live snapshot')", 90)
-                await c.wait_for("document.querySelectorAll('.js-plotly-plot').length >= 3", 90)
-                await asyncio.sleep(5)
+                await asyncio.sleep(6)
                 await c.js("window.scrollTo(0,0)")
                 await c.shot("live_deribit_surface.jpg", 2)
-                await c.pick_option("Dataset", "synthetic · demo")
-                await asyncio.sleep(6)
                 await c.click_text("LIVE", "label, p")
-                await c.wait_for("document.body.innerText.includes('Not connected') || document.body.innerText.includes('feed LIVE')", 30)
-                if await c.js("document.body.innerText.includes('Not connected')"):
-                    await c.click_text("Connect", "button, p")
-                await c.wait_for("document.body.innerText.includes('feed LIVE')", 40)
-                await asyncio.sleep(20)   # let 1s closes, tape and flow accumulate from the real feed
-                for _ in range(40):       # the 1 s fragment re-mounts tables; wait for a painted frame
-                    if await c.painted(0):
-                        break
-                    await asyncio.sleep(0.25)
-                await c.shot("live_orderflow.jpg", 0)
-                await c.click_text("Disconnect", "button, p")
+                await c.wait_for("document.body.innerText.includes('Not connected') || document.body.innerText.includes('Disconnect') || document.body.innerText.includes('DISCONNECT')", 30)
                 await asyncio.sleep(2)
+                if await c.js("document.body.innerText.includes('Not connected')"):
+                    await c.js("[...document.querySelectorAll('button')].find(b=>b.innerText.trim().toLowerCase()==='connect').click(); 1")
+                await c.wait_for("[...document.querySelectorAll('iframe')].some(f => (f.srcdoc || '').includes('landscape'))", 60)
+                await asyncio.sleep(30)          # 24h history + book samples accumulate from the real feed
+                await c.js("window.scrollTo(0, 230)")
+                await c.shot("live_crypto_panel.jpg", 2)
+                await c.js("window.scrollTo(0, 620)")
+                await c.shot("live_orderbook_3d.jpg", 1)
+                try:
+                    await c.click_text("Disconnect", "button, p")
+                except RuntimeError:
+                    pass
+                await asyncio.sleep(2)
+                await c.click_text("stocks & indices · delayed", "label, p")
+                await asyncio.sleep(2)
+                await c.click_text("Load delayed day chart (connects to Yahoo Finance)", "button, p")
+                await asyncio.sleep(4)
+                await c.pick_option("Stock / index", "Reliance Industries · INDIA")
+                await c.wait_for("document.querySelectorAll('.js-plotly-plot').length >= 2", 60)
+                await c.js("const p=[...document.querySelectorAll('.js-plotly-plot')].pop(); p.scrollIntoView({block:'center'}); 1")
+                await c.shot("stock_volume_3d.jpg", 6)
     finally:
         proc.terminate()
 
