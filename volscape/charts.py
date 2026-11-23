@@ -1,6 +1,8 @@
 """Plotly figures with the VOLSCAPE workstation theme. All values plotted are computed values."""
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -525,6 +527,8 @@ def book_landscape(history: list, bins_bps: float | None = None, half_width_bps:
         offs = [abs(p / mid - 1) * 1e4 for _, mid, bids, asks in history for p, _ in list(bids) + list(asks)]
         half_width_bps = float(np.percentile(offs, 99)) if offs else 1.0
         half_width_bps = max(half_width_bps, 1e-3)
+        step = 10 ** math.floor(math.log10(half_width_bps)) / 2      # quantize: window only changes in coarse steps
+        half_width_bps = math.ceil(half_width_bps / step) * step
     if bins_bps is None:
         bins_bps = 2 * half_width_bps / n_bins
     edges = np.linspace(-half_width_bps, half_width_bps, int(round(2 * half_width_bps / bins_bps)) + 1)
@@ -551,7 +555,13 @@ def book_landscape(history: list, bins_bps: float | None = None, half_width_bps:
         colorscale=[[0, TEAL], [0.5, "#04170c"], [1, RED]], showscale=False,
         contours=dict(z=dict(show=False)), lighting=dict(ambient=0.6, diffuse=0.6, specular=0.15, roughness=0.6),
         hovertemplate="%{x:+.1f} bps from mid<br>t%{y}s<br>qty %{z:.4g}<extra></extra>"))
-    fig.update_layout(scene=scene_axes("bps from mid (− bids · + asks)", "seconds ago", "displayed qty",
-                                       aspectratio=dict(x=1.4, y=1.5, z=0.55)))
+    zmax = float(np.nanmax(Z)) if np.isfinite(Z).any() else 1.0
+    ztop = 2 ** math.ceil(math.log2(max(zmax, 1e-9)))                 # height cap moves only in powers of 2
+    sc = scene_axes("bps from mid (− bids · + asks)", "seconds ago", "displayed qty",
+                    aspectratio=dict(x=1.4, y=1.5, z=0.55))
+    sc["xaxis"]["range"] = [-half_width_bps, half_width_bps]          # fixed ranges: no rescale jump per update
+    sc["yaxis"]["range"] = [-180, 0]
+    sc["zaxis"]["range"] = [0, ztop]
+    fig.update_layout(scene=sc)
     return _layout3d(fig, "vs3d:book",
                      f"Order-book landscape · last {len(secs)}s · displayed top-20 depth · ±{half_width_bps:.3g} bp · bin {bins_bps:.3g} bp", height)

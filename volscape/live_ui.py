@@ -60,7 +60,30 @@ def render_live_workspace() -> None:
         st.markdown('<div class="vs-note">Not connected. Press Connect to open the public feeds. No network '
                     'connection is made before that.</div>', unsafe_allow_html=True)
         return
+    _landscape_panel(hub)
     _live_panel(hub)
+
+
+@st.fragment(run_every=5.0)
+def _landscape_panel(hub: LiveHub) -> None:
+    # Own fragment at a slower cadence: Streamlit rebuilds the WebGL scene on every update, so updating
+    # it every second flickers. Fixed axis ranges keep each rebuild visually stable.
+    c1, c2 = st.columns([6, 1], vertical_alignment="center")
+    paused = c2.toggle("Pause 3D", False, key="land_pause")
+    if paused and "land_fig" in st.session_state:
+        fig = st.session_state.land_fig
+    else:
+        fig = ch.book_landscape(hub.snapshot().book_history)
+        st.session_state.land_fig = fig
+    c1.markdown('<div class="vs-conv">order-book landscape · refreshes every 5 s · pause to inspect</div>',
+                unsafe_allow_html=True)
+    if fig is not None:
+        st.plotly_chart(fig, key="live_land", config={**PLOT_CFG, "scrollZoom": False}, theme=None)
+        st.markdown('<div class="vs-conv">terrain = displayed top-20 resting quantity per bin around the then-current '
+                    'mid (window adapts in coarse steps), one sample per second (bounded to 180 s) · empty rows = '
+                    'seconds without a book update · not total supply/demand</div>', unsafe_allow_html=True)
+    else:
+        st.caption("Order-book landscape needs at least 2 seconds of book samples.")
 
 
 @st.fragment(run_every=1.0)
@@ -97,14 +120,6 @@ def _live_panel(hub: LiveHub) -> None:
         f'<div class="vs-card"><div class="l">{l}</div><div class="v{" warn" if w else ""}">{v}</div>'
         f'<div class="s">{sub}</div></div>' for l, v, sub, w in cards) + "</div>", unsafe_allow_html=True)
 
-    land = ch.book_landscape(s.book_history)
-    if land is not None:
-        st.plotly_chart(land, key="live_land", config={**PLOT_CFG, "scrollZoom": False}, theme=None)
-        st.markdown('<div class="vs-conv">terrain = displayed top-20 resting quantity per bin around the then-current '
-                    'mid (window adapts to the book&#39;s reach), one sample per second (bounded to 180 s) · empty rows = seconds without a book update · '
-                    'not total supply/demand</div>', unsafe_allow_html=True)
-    else:
-        st.caption("Order-book landscape needs at least 2 seconds of book samples.")
     a, b = st.columns([1, 1.25], gap="medium")
     with a:
         st.plotly_chart(ch.live_depth_figure(s.bids, s.asks), key="live_depth", config=PLOT_CFG, theme=None)
