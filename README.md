@@ -29,14 +29,15 @@ shows the public BTCUSDT feed at the moment of capture. The smile, arbitrage and
 the latest layout pass (legends moved below charts, controls moved to a strip).*
 
 ## Network use
-SURFACE is fully offline. Streamlit and Plotly serve their own bundled assets, and nothing is fetched.
+SURFACE computation never uses the network: Streamlit and Plotly serve their own bundled assets.
 LIVE opens connections **only after you press Connect**, and only to:
 - `data-stream.binance.vision` / `stream.binance.com` (WebSocket, public market data);
 - `data-api.binance.vision` / `api.binance.com` (REST klines for sparklines);
 - `query1/query2.finance.yahoo.com` (delayed quotes).
 
-Press Disconnect to close them. If Binance is restricted in your region, the status line shows the
-HTTP error and values stay N/A or blank; nothing is filled in.
+The connections stay open in every workspace until you press Disconnect in LIVE; while they are open,
+the SURFACE header shows `◉ live feed connected`. If Binance is restricted in your region, the status line shows the
+HTTP error and values stay N/A or empty; nothing is filled in.
 
 ## Quick start
 
@@ -127,7 +128,7 @@ scrolls the page rather than the camera. The camera persists across control chan
   with a VWAP line, and per-second signed aggressor flow.
 - **Tape and log**: the newest trades, plus a deduplicated feed-event log.
 - **Watchlist**: crypto in real time from Binance and equities delayed from Yahoo. It shows change, the
-  position in the day range and a trend sparkline. Missing values stay blank and are never filled in.
+  position in the day range and a trend sparkline. Missing values stay empty and are never filled in.
 
 The feed runs on a background asyncio thread (`volscape/live/hub.py`). Streamlit reads locked snapshots
 in a fragment that refreshes once a second, so the SURFACE workspace never reruns on a tick.

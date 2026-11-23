@@ -150,5 +150,6 @@ def _live_panel(hub: LiveHub) -> None:
             "day_range": st.column_config.ProgressColumn("position in range", min_value=0.0, max_value=1.0,
                                                          format="%.2f"),
             "trend": st.column_config.LineChartColumn("trend")})
-        st.caption("Blank = no price received yet or the source is unavailable (never filled in). Crypto change is vs 24h open; "
+        st.caption("Empty cells = no price received yet or source unavailable; missing values are never filled in. "
+                   "Crypto change is vs 24h open; "
                    "equity change is vs previous close.")

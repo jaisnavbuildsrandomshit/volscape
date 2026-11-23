@@ -27,7 +27,7 @@ from volscape.scenarios import (STICKY_MONEYNESS, STICKY_STRIKE, initial_cost, l
                                 portfolio_greeks, scenario_pnl)
 from volscape.surface import FitSettings, SurfaceModel
 from volscape.synthetic import SyntheticSpec, generate_chain
-from volscape.live_ui import render_live_workspace
+from volscape.live_ui import get_hub, render_live_workspace
 
 ROOT = Path(__file__).resolve().parent
 st.set_page_config(page_title="VOLSCAPE", layout="wide", initial_sidebar_state="collapsed")
@@ -194,8 +194,9 @@ with st.sidebar:
         min_pts = int(st.number_input("Min distinct strikes per slice", 6, 40, 7))
         max_rmse = st.number_input("Reject slice if IV RMSE > (vol pts)", 0.1, 20.0, 2.5, 0.1)
         n_ms = int(st.slider("Deterministic multistarts", 1, 12, 12))
-    st.caption("SURFACE runs fully offline. LIVE opens connections to public Binance (real time) and "
-               "Yahoo Finance (delayed) endpoints only after you press Connect.")
+    st.caption("SURFACE computation never uses the network. LIVE opens connections to public Binance (real time) "
+               "and Yahoo Finance (delayed) endpoints only after you press Connect; they stay open, in every "
+               "workspace, until you press Disconnect.")
 
 if "cam_rev" not in st.session_state:
     st.session_state.cam_rev = 0
@@ -260,7 +261,9 @@ meta = val.meta
 badge = '<span class="vs-badge vs-syn">[ synthetic · not market data ]</span>' if meta.is_synthetic else \
     '<span class="vs-badge vs-imp">[ imported observations ]</span>'
 vt = meta.valuation_time.strftime("%Y-%m-%d %H:%M UTC") if meta.valuation_time is not None else "—"
-head_ph.markdown(f'<div class="vs-head"><div class="vs-logo">VOL<span>SCAPE</span><i>_</i></div>{badge}</div>',
+live_on = get_hub().connected
+live_mark = ('<span class="vs-badge vs-imp">◉ live feed connected · disconnect in LIVE</span>' if live_on else "")
+head_ph.markdown(f'<div class="vs-head"><div class="vs-logo">VOL<span>SCAPE</span><i>_</i></div>{badge}{live_mark}</div>',
                  unsafe_allow_html=True)
 st.markdown(f"""<div class="vs-meta"><span>src <b>{html.escape(meta.source_label)}</b></span>
 <span>und <b>{html.escape(meta.underlying)}</b></span><span>ccy <b>{html.escape(meta.currency)}</b></span>
