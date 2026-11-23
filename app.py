@@ -29,6 +29,8 @@ from volscape.surface import FitSettings, SurfaceModel
 from volscape.synthetic import SyntheticSpec, generate_chain
 from volscape.live_ui import get_hub, render_live_workspace
 from volscape.live.deribit import fetch_book, to_chain
+from volscape.live.brokers import (NSE_UNDERLYINGS, US_UNDERLYINGS, MissingCredentials,
+                                  fetch_alpaca, fetch_upstox)
 
 ROOT = Path(__file__).resolve().parent
 st.set_page_config(page_title="VOLSCAPE", layout="wide", initial_sidebar_state="collapsed")
@@ -176,6 +178,12 @@ def cached_pipeline(content: bytes, label: str, synthetic: bool, vkey: tuple, iv
     return run_pipeline(content, label, synthetic, settings)
 
 
+@st.cache_data(show_spinner=False, max_entries=16)
+def broker_snapshot(provider: str, underlying: str, nonce: int):
+    """One snapshot per (provider, underlying, refresh press), with the user's own credentials."""
+    return fetch_upstox(underlying) if provider == "upstox" else fetch_alpaca(underlying)
+
+
 @st.cache_data(show_spinner=False, max_entries=8)
 def deribit_snapshot(currency: str, nonce: int):
     """One Deribit option-book snapshot per (currency, refresh press). Network only when called."""
@@ -236,7 +244,7 @@ if ws == "LIVE":
     st.stop()
 
 with h_ds:
-    choice = st.selectbox("Dataset", list(BUNDLED) + ["live · deribit BTC", "live · deribit ETH", "synthetic · seed", "import csv"], index=0,
+    choice = st.selectbox("Dataset", list(BUNDLED) + ["live · deribit BTC", "live · deribit ETH", "live · NSE (Upstox)", "live · US (Alpaca)", "synthetic · seed", "import csv"], index=0,
                           label_visibility="collapsed", key="dataset")
 seed, spec_dict = None, None
 content, label, synthetic = None, "", True
@@ -264,6 +272,44 @@ elif choice.startswith("live · deribit"):
     except Exception as exc:  # noqa: BLE001 - network/HTTP problems are shown, never replaced with other data
         st.error(f"Deribit snapshot unavailable: {type(exc).__name__}: {exc}. No other dataset is substituted.")
         st.stop()
+elif choice in ("live · NSE (Upstox)", "live · US (Alpaca)"):
+    synthetic = False
+    nse = choice.startswith("live · NSE")
+    b1, b2, b3 = st.columns([1.4, 3.6, 1], vertical_alignment="bottom")
+    under = b1.selectbox("Underlying", list(NSE_UNDERLYINGS) if nse else list(US_UNDERLYINGS), key="broker_under")
+    nonce_key = f"broker_nonce_{choice}_{under}"
+    st.session_state.setdefault(nonce_key, 0)
+    if b3.button("Refresh snapshot", width="stretch", key="broker_refresh"):
+        st.session_state[nonce_key] += 1
+    try:
+        with st.spinner(f"Fetching {under} option chain from {'Upstox' if nse else 'Alpaca'} (your account)…"):
+            content, bnotes = broker_snapshot("upstox" if nse else "alpaca", under, st.session_state[nonce_key])
+    except MissingCredentials as exc:
+        head_ph.markdown('<div class="vs-head"><div class="vs-logo">VOL<span>SCAPE</span><i>_</i></div>'
+                         '<span class="vs-badge vs-imp">[ live snapshot · credentials needed ]</span></div>',
+                         unsafe_allow_html=True)
+        st.info(
+            f"{exc}. This source needs your own free API credentials, read from environment variables on this "
+            "machine only (never stored, shown or exported).\n\n"
+            + ("**Upstox (NSE):** create an app at upstox.com/developer, complete the login flow to get an access "
+               "token (tokens expire daily), then in PowerShell: `$env:UPSTOX_ACCESS_TOKEN = \"<token>\"` and restart "
+               "with `.\\start.cmd` from that same window." if nse else
+               "**Alpaca (US):** create a free account at alpaca.markets, generate paper-trading API keys, then in "
+               "PowerShell: `$env:ALPACA_API_KEY_ID = \"<key id>\"; $env:ALPACA_API_SECRET_KEY = \"<secret>\"` and "
+               "restart with `.\\start.cmd` from that same window.")
+            + "\n\nNo other dataset is substituted.")
+        st.stop()
+    except Exception as exc:  # noqa: BLE001 - provider/HTTP problems are shown, never replaced with other data
+        st.error(f"{'Upstox' if nse else 'Alpaca'} snapshot unavailable: {exc}. No other dataset is substituted.")
+        st.stop()
+    label = (f"LIVE SNAPSHOT · {'Upstox NSE' if nse else 'Alpaca US (indicative feed)'} · {under} options · "
+             f"fetched {bnotes['fetched_at'][11:19]} UTC")
+    skipped = bnotes.get("skipped_expiries") or {}
+    b2.markdown(f'<div class="vs-conv">{html.escape(bnotes["source"])} · {bnotes["n_raw"]} quotes · '
+                f'{bnotes["n_no_ask"]} without an ask skipped · {len(bnotes["forwards"])} expiries with a parity-implied '
+                f'forward · {len(skipped)} skipped (forward not identified) · snapshot, not streaming'
+                + ('' if nse else ' · US equity options are AMERICAN: enable the explicit European approximation '
+                   'in the sidebar (Validation rules) to fit them') + '</div>', unsafe_allow_html=True)
 elif choice == "synthetic · seed":
     g1, g2, _ = st.columns([1, 2, 3])
     seed = int(g1.number_input("Seed", 0, 10_000_000, 7, 1))
@@ -299,7 +345,7 @@ with st.spinner("Validating quotes, solving implied vols, calibrating SVI slices
                           fkey, float(min_vega))
 val = res.validation
 meta = val.meta
-badge = '<span class="vs-badge vs-syn">[ synthetic · not market data ]</span>' if meta.is_synthetic else     '<span class="vs-badge vs-imp">[ live snapshot · deribit · market data ]</span>' if label.startswith("LIVE SNAPSHOT") else \
+badge = '<span class="vs-badge vs-syn">[ synthetic · not market data ]</span>' if meta.is_synthetic else     f'<span class="vs-badge vs-imp">[ live snapshot · {html.escape(label.split(" · ")[1].lower())} · market data ]</span>' if label.startswith("LIVE SNAPSHOT") else \
     '<span class="vs-badge vs-imp">[ imported observations ]</span>'
 vt = meta.valuation_time.strftime("%Y-%m-%d %H:%M UTC") if meta.valuation_time is not None else "—"
 live_on = get_hub().connected
@@ -569,7 +615,7 @@ with t_risk:
             legs0 = pd.DataFrame(dict(type=["Call", "Call", "Put"], expiry=[f"{e60:%Y-%m-%d}"] * 3,
                                       strike=[near(F60), near(F60 * 1.05), near(F60 * 0.95)],
                                       quantity=[1.0, -1.0, 1.0], premium=[np.nan] * 3,
-                                      multiplier=[1.0 if label.startswith("LIVE SNAPSHOT") else 100.0] * 3))
+                                      multiplier=[1.0 if label.startswith("LIVE SNAPSHOT") and "Alpaca" not in label else 100.0] * 3))
             st.session_state.legs_df = legs0
             st.session_state.legs_key = key
             st.session_state.legs_ver = st.session_state.get("legs_ver", 0) + 1

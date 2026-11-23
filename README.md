@@ -4,8 +4,10 @@ A local options-volatility research workstation with two workspaces:
 
 - **SURFACE**: validate an option chain, solve bid/mid/ask implied vols, fit an inspectable surface
   (total-variance interpolation baseline and raw SVI), audit it with static-arbitrage diagnostics, and
-  stress a small European portfolio. It works on bundled synthetic chains, your own CSV, or a **live
-  snapshot of the Deribit BTC/ETH option book** (public API, no keys).
+  stress a small European portfolio. It works on bundled synthetic chains, your own CSV, a **live
+  snapshot of the Deribit BTC/ETH option book** (public API, no keys), or live **NSE** (NIFTY, BANKNIFTY,
+  RELIANCE, TCS, …) and **US** (SPY, QQQ, AAPL, NVDA, …) option chains via your own free Upstox or Alpaca
+  API credentials.
 - **LIVE** (opt-in): real-time Binance Spot order flow (book depth, trade tape, signed flow, VWAP) plus a
   delayed watchlist of crypto, NIFTY/SENSEX, US and global indices and stocks. It uses the market-data
   reader from [orderflow-terminal](https://github.com/jaisnavbuildsrandomshit/orderflow-terminal), vendored
@@ -47,6 +49,33 @@ Every 3D view encodes real dimensions of the data; none is decorative.
 
 The layout borrows the HUD framing of terminal UIs and the time × price × size "liquidity landscape"
 used by order-flow tools.
+
+## Live NSE and US option surfaces (your own API keys)
+Free, keyless access to NSE or US stock-option chains isn't available. NSE's site sits behind
+bot protection, and Yahoo and Cboe require session tokens or block scripted clients. VOLSCAPE does not
+work around any of that. Instead it uses each provider's official API with **your own** credentials,
+read from environment variables on your machine:
+
+| dataset | provider | env vars | notes |
+|---|---|---|---|
+| `live · NSE (Upstox)` | Upstox API v2 (free with an Upstox account) | `UPSTOX_ACCESS_TOKEN` | Tokens expire daily. NSE index and stock options are European. |
+| `live · US (Alpaca)` | Alpaca Market Data (free account, *indicative* options feed, IEX spot) | `ALPACA_API_KEY_ID`, `ALPACA_API_SECRET_KEY` | The indicative feed is delayed and modified. US equity options are **American**: enable the explicit European approximation in the sidebar to fit them. |
+
+```powershell
+$env:ALPACA_API_KEY_ID = "<key id>"; $env:ALPACA_API_SECRET_KEY = "<secret>"
+$env:UPSTOX_ACCESS_TOKEN = "<access token>"
+.\start.cmd
+```
+
+Neither API publishes a forward or a rate, so each expiry's **forward and discount factor are estimated
+from put–call parity**. VOLSCAPE regresses C − P on K over the 10 near-the-money pairs. Expiries without
+enough two-sided pairs are skipped and listed, never guessed. Keys are sent only to the provider's own
+host and are never shown, logged or exported.
+
+**Not verified live.** I had no Upstox or Alpaca credentials while building this. Both adapters are built
+from the providers' published API documentation and tested offline with payloads in exactly that
+documented shape, including full-pipeline round trips that recover known vols. The first real run with
+your keys is the end-to-end test; any error is shown in the app.
 
 ## Network use
 SURFACE computation never uses the network: Streamlit and Plotly serve their own bundled assets.
@@ -180,11 +209,12 @@ tests/             pytest suite (pricing, IV, data, surface, diagnostics, scenar
 ```
 
 ## Verification
-- `pytest`: 299 tests, all offline:
+- `pytest`: 304 tests, all offline:
   - 267 for the VOLSCAPE core;
   - 26 for the live reader: ported orderflow parser and state tests, plus LiveHub bridge and book-history tests;
   - 4 for the Deribit adapter, including a full-pipeline round trip that recovers known SVI smiles;
-  - 2 checking that the 3D figures faithfully encode the data (binning, gaps, density units).
+  - 2 checking that the 3D figures faithfully encode the data (binning, gaps, density units);
+  - 5 for the Upstox/Alpaca adapters (parity forward, documented payload shapes, American opt-in, missing keys).
 
   Together they cover known-answer prices and Greeks, parity, IV round trips, limits,
   finite-difference Greeks, determinism, SVI recovery on SSVI slices, interpolation, known

@@ -137,7 +137,21 @@ are skipped and counted. A missing bid is written as 0 and flagged `ZERO_BID`. E
 through the same validation, IV, SVI and diagnostic code as any CSV. Deribit options are European and
 cash-settled, which is consistent with the BSM convention used here.
 
-## 8. Synthetic data
+## 8. Live NSE / US snapshots (Upstox, Alpaca)
+Neither API supplies a forward or a rate. For each expiry VOLSCAPE fits a least-squares line through
+`(K, C_mid − P_mid)` over the 10 strikes nearest the spot. For European options `C − P = DF·F − DF·K`,
+so `slope = −DF` and `intercept = DF·F`. VOLSCAPE then sets `r_T = −ln(DF)/T` and
+`q_T = r_T − ln(F/S)/T`, so `F = S·e^{(r−q)T}`.
+
+An expiry is skipped and reported when it has fewer than 3 two-sided pairs or an implausible
+`DF ∉ (0.80, 1.02]`; the forward is never guessed. Expiry times are 15:30 IST for NSE and 16:00 New York
+for US.
+
+US equity and ETF options are American. Parity then holds only approximately, and BSM is only an
+approximation, so those rows are marked American. Validation rejects them unless the user explicitly
+enables the European approximation, which then shows a warning everywhere.
+
+## 9. Synthetic data
 The generator is SSVI (Gatheral & Jacquier, 2014):
 - `w(k,T) = θ/2·(1 + ρφk + √((φk+ρ)² + 1 − ρ²))`;
 - `θ(T) = σ_ATM(T)²T` with `σ_ATM(T) = v_∞ + (v₀ − v_∞)e^{−T/τ}`;

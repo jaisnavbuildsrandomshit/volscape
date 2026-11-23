@@ -42,6 +42,13 @@ def main():
     by_label(at.button, "Reset camera").click().run(); check(at, "reset camera")
     by_key(at.selectbox, "dataset").set_value("synthetic · dirty").run(); check(at, "dirty fixture")
     by_key(at.selectbox, "dataset").set_value("synthetic · seed").run(); check(at, "generated synthetic seed 7")
+    import os
+    for v in ("UPSTOX_ACCESS_TOKEN", "ALPACA_API_KEY_ID", "ALPACA_API_SECRET_KEY"):
+        os.environ.pop(v, None)                     # no credentials -> setup guidance, no network call
+    by_key(at.selectbox, "dataset").set_value("live · NSE (Upstox)").run(); check(at, "NSE without credentials (guidance)")
+    assert any("UPSTOX_ACCESS_TOKEN" in i.value for i in at.info), "Upstox setup guidance missing"
+    by_key(at.selectbox, "dataset").set_value("live · US (Alpaca)").run(); check(at, "US without credentials (guidance)")
+    assert any("ALPACA_API_KEY_ID" in i.value for i in at.info), "Alpaca setup guidance missing"
     by_key(at.selectbox, "dataset").set_value("import csv").run(); check(at, "import mode without file (no demo substitution)")
     assert any("never substituted" in i.value for i in at.info), "import empty state missing"
     by_key(at.radio, "ws").set_value("LIVE").run(); check(at, "LIVE workspace (not connected, no network)")
