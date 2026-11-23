@@ -7,3 +7,4 @@ exports/*
 .claude/
 .venv/.installed-requirements
 .streamlit/secrets.toml
+static/

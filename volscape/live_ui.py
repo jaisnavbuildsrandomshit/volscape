@@ -15,6 +15,22 @@ import streamlit as st
 from . import charts as ch
 from .live.hub import LiveHub
 from .live.state import SYMBOLS
+from .live.markets import EQUITIES, fetch_equity_chart
+
+import asyncio
+import shutil
+from pathlib import Path
+
+import plotly
+import plotly.graph_objects as go
+import streamlit.components.v1 as components
+
+_ROOT = Path(__file__).resolve().parents[1]
+_STATIC = _ROOT / "static" / "plotly.min.js"        # served by Streamlit at /app/static/ (enableStaticServing)
+if not _STATIC.exists():
+    _STATIC.parent.mkdir(exist_ok=True)
+    shutil.copy(Path(plotly.__file__).parent / "package_data" / "plotly.min.js", _STATIC)
+_PANEL = (Path(__file__).parent / "live_panel.html").read_text(encoding="utf-8")
 
 PLOT_CFG = {"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]}
 
@@ -39,6 +55,11 @@ def _status_class(status: str) -> str:
 
 
 def render_live_workspace() -> None:
+    market = st.radio("Market", ["crypto · real time", "stocks & indices · delayed"], horizontal=True,
+                      key="live_market", label_visibility="collapsed")
+    if market.startswith("stocks"):
+        _render_equities()
+        return
     hub = get_hub()
     syms = list(SYMBOLS)
     c1, c2, c3 = st.columns([1.3, 1, 3.7], gap="small", vertical_alignment="bottom")
@@ -60,33 +81,77 @@ def render_live_workspace() -> None:
         st.markdown('<div class="vs-note">Not connected. Press Connect to open the public feeds. No network '
                     'connection is made before that.</div>', unsafe_allow_html=True)
         return
-    _landscape_panel(hub)
+    # Charts live in one browser-side panel that keeps its own Binance stream and updates in place
+    # (Plotly.react): Streamlit never rebuilds them, so there is no per-tick flicker or lag.
+    components.html(_PANEL.replace("__SYMBOL__", sym), height=1460, scrolling=False)
     _live_panel(hub)
 
 
-@st.fragment(run_every=5.0)
-def _landscape_panel(hub: LiveHub) -> None:
-    # Own fragment at a slower cadence: Streamlit rebuilds the WebGL scene on every update, so updating
-    # it every second flickers. Fixed axis ranges keep each rebuild visually stable.
-    c1, c2 = st.columns([6, 1], vertical_alignment="center")
-    paused = c2.toggle("Pause 3D", False, key="land_pause")
-    if paused and "land_fig" in st.session_state:
-        fig = st.session_state.land_fig
-    else:
-        fig = ch.book_landscape(hub.snapshot().book_history)
-        st.session_state.land_fig = fig
-    c1.markdown('<div class="vs-conv">order-book landscape · refreshes every 5 s · pause to inspect</div>',
+@st.cache_data(ttl=60, show_spinner=False)
+def _equity_day(symbol: str):
+    return asyncio.run(fetch_equity_chart(symbol))
+
+
+def _render_equities() -> None:
+    names = {f"{e.name} · {e.group}": e.symbol for e in EQUITIES}
+    c1, c2 = st.columns([1.6, 4], vertical_alignment="bottom")
+    pick = c1.selectbox("Stock / index", list(names), key="eq_pick")
+    c2.markdown('<div class="vs-conv">Yahoo Finance 1-minute bars for the current/last session · DELAYED (not exchange '
+                'real-time) · refreshed every 60 s · no public order book exists for these, so no depth landscape · '
+                'option surfaces for NSE / US underlyings: SURFACE → live · NSE (Upstox) / live · US (Alpaca)</div>',
                 unsafe_allow_html=True)
-    if fig is not None:
-        st.plotly_chart(fig, key="live_land", config={**PLOT_CFG, "scrollZoom": False}, theme=None)
-        st.markdown('<div class="vs-conv">terrain = displayed top-20 resting quantity per bin around the then-current '
-                    'mid (window adapts in coarse steps), one sample per second (bounded to 180 s) · empty rows = '
-                    'seconds without a book update · not total supply/demand</div>', unsafe_allow_html=True)
-    else:
-        st.caption("Order-book landscape needs at least 2 seconds of book samples.")
+    if not st.session_state.get("eq_ok"):
+        if st.button("Load delayed day chart (connects to Yahoo Finance)", type="primary"):
+            st.session_state.eq_ok = True
+            st.rerun()
+        return
+    _equity_panel(names[pick])
 
 
-@st.fragment(run_every=1.0)
+@st.fragment(run_every=60.0)
+def _equity_panel(symbol: str) -> None:
+    try:
+        chart = _equity_day(symbol)
+    except Exception as exc:  # noqa: BLE001 - shown, never replaced
+        st.error(f"Day chart unavailable for {symbol}: {exc}")
+        return
+    if not chart.bars:
+        st.warning("No bars returned for this session (market may not have opened yet).")
+        return
+    x = pd.to_datetime([b.t for b in chart.bars], unit="s", utc=True).tz_convert(chart.tz_name or "UTC")
+    o, h, l, c = ([getattr(b, f) for b in chart.bars] for f in "ohlc")
+    v = [b.v for b in chart.bars]
+    ref = chart.prev_close
+    chg = None if not ref else (chart.price / ref - 1) * 100 if chart.price else None
+    is_open = chart.market_open(datetime.now(timezone.utc).timestamp())
+    cards = [("Last", _n(chart.price, "{:,.2f}"), f"{chart.currency} · delayed", False),
+             ("Change", _n(chg, "{:+.2f}%"), "vs previous close", False),
+             ("Day high", _n(chart.day_high, "{:,.2f}"), "session", False),
+             ("Day low", _n(chart.day_low, "{:,.2f}"), "session", False),
+             ("Prev close", _n(ref, "{:,.2f}"), chart.exchange, False),
+             ("Market", "OPEN" if is_open else "CLOSED", chart.tz_name, not is_open)]
+    st.markdown('<div class="vs-cards">' + "".join(
+        f'<div class="vs-card"><div class="l">{a}</div><div class="v{" warn" if w else ""}">{b}</div>'
+        f'<div class="s">{d}</div></div>' for a, b, d, w in cards) + "</div>", unsafe_allow_html=True)
+    fig = go.Figure([
+        go.Candlestick(x=x, open=o, high=h, low=l, close=c, name=chart.name,
+                       increasing=dict(line=dict(color=ch.TEAL, width=1), fillcolor=ch.TEAL),
+                       decreasing=dict(line=dict(color=ch.RED, width=1), fillcolor=ch.RED)),
+        go.Bar(x=x, y=v, yaxis="y2", marker_color=["rgba(57,239,139,0.25)" if cc >= oo else "rgba(255,91,96,0.25)"
+                                                    for cc, oo in zip(c, o)], hovertemplate="vol %{y:,.0f}<extra></extra>")])
+    if ref:
+        fig.add_hline(y=ref, line=dict(color=ch.AMBER, width=1, dash="dot"), annotation_text="prev close",
+                      annotation_font=dict(color=ch.AMBER, size=10))
+    ch.base_layout(fig, height=520, title=f"{chart.name} · {chart.exchange} · 1-minute bars · session of "
+                                         f"{x[-1]:%Y-%m-%d} ({chart.tz_name}) · delayed")
+    fig.update_layout(showlegend=False, uirevision="eq", xaxis=dict(rangeslider=dict(visible=False)),
+                      yaxis=dict(domain=[0.22, 1]), yaxis2=dict(domain=[0, 0.18]))
+    fig.update_xaxes(**ch._axis(f"time ({chart.tz_name})"))
+    fig.update_yaxes(**ch._axis(""))
+    st.plotly_chart(fig, key="eq_day", config=PLOT_CFG, theme=None)
+
+
+@st.fragment(run_every=2.0)
 def _live_panel(hub: LiveHub) -> None:
     s = hub.snapshot()
     dp = _dp(s.symbol)
@@ -122,11 +187,6 @@ def _live_panel(hub: LiveHub) -> None:
 
     a, b = st.columns([1, 1.25], gap="medium")
     with a:
-        st.plotly_chart(ch.live_depth_figure(s.bids, s.asks), key="live_depth", config=PLOT_CFG, theme=None)
-    with b:
-        st.plotly_chart(ch.live_price_figure(s.price_series, s.vwap), key="live_px", config=PLOT_CFG, theme=None)
-    a, b = st.columns([1, 1.25], gap="medium")
-    with a:
         st.markdown('<div class="vs-panel-title">Trade tape · newest first</div>', unsafe_allow_html=True)
         if s.trades:
             tape = pd.DataFrame(s.trades, columns=["time_ms", "price", "qty", "side", "notional"])
@@ -139,10 +199,6 @@ def _live_panel(hub: LiveHub) -> None:
         else:
             st.caption("No trades received yet.")
     with b:
-        if s.flow_series:
-            st.plotly_chart(ch.live_flow_figure(s.flow_series), key="live_flow", config=PLOT_CFG, theme=None)
-        else:
-            st.caption("Flow histogram warming up.")
         if s.events:
             st.markdown('<div class="vs-panel-title">Feed events (deduplicated)</div>', unsafe_allow_html=True)
             st.markdown("<div class='vs-conv'>" + "<br>".join(

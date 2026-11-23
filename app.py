@@ -82,7 +82,7 @@ p, label, span, div { letter-spacing: 0.01em; }
 .st-key-ws [role="radiogroup"] > label:has(input:checked) { border-color: var(--g); background: rgba(57,239,139,0.06); }
 .st-key-ws [role="radiogroup"] > label:has(input:checked) p { color: var(--g); }
 .st-key-ws [role="radiogroup"] > label > div:first-child { display: none; }
-.st-key-ws p { letter-spacing: 0.16em; font-size: 0.72rem !important; }
+.st-key-ws p { letter-spacing: 0.16em; font-size: 0.72rem !important; white-space: nowrap; }
 .vs-panel-title { color: var(--dim); font-size:0.66rem; letter-spacing:0.18em; text-transform:uppercase; margin: 2px 0 6px 0; }
 .vs-panel-title::before { content: "// "; color: var(--g2); }
 .vs-note { color: var(--dim); font-size:0.72rem; border-left: 1px solid var(--amber); padding: 3px 10px; margin: 6px 0 10px 0; }

@@ -172,6 +172,17 @@ scrolls the page rather than the camera. The camera persists across control chan
 **Reset camera**. The toolbar camera icon exports a 3× PNG.
 
 ## LIVE workspace
+**Crypto (real time).** After *Connect*, the charts run in a browser-side panel. The panel keeps its own
+Binance WebSocket and updates the charts in place (Plotly.react), so there is no redraw flicker. It
+shows the **last 24 hours of 1-minute candles**, a 3D order-book landscape over the last 300 s, displayed
+depth and signed flow.
+
+**Stocks and indices (delayed).** This view covers NIFTY 50, NIFTY BANK, SENSEX, Reliance, TCS, HDFC
+Bank, the S&P 500, NASDAQ, Apple, NVIDIA, Nikkei, FTSE and more. It shows the whole session's 1-minute
+candles from Yahoo Finance (delayed), with the previous close and open/closed status, refreshed every
+60 s. These markets have no public order book, so they have no depth view. Their option *surfaces* live in
+SURFACE (Upstox/Alpaca).
+
 - **Status line**: feed state (CONNECTING / LIVE / RECONNECTING / OFFLINE), endpoint, receive age (amber
   when no message for more than 5 s), message and trade rates, gap, duplicate and missed-trade counters,
   watchlist feed states, and a UTC clock.

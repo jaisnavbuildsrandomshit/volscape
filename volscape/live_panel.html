@@ -1,0 +1,186 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  html,body{margin:0;background:#020604;color:#c8efd5;font-family:'Source Code Pro',Consolas,Menlo,monospace;}
+  .bar{display:flex;gap:18px;flex-wrap:wrap;font-size:11px;color:#5f8a72;padding:4px 2px 8px;border-bottom:1px solid #10301e}
+  .bar b{color:#7ea58d;font-weight:500} .ok{color:#39ef8b!important} .warn{color:#e9b54a!important} .bad{color:#ff5b60!important}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:10px} .full{grid-column:1/3}
+  .cell{position:relative} .cell:before,.cell:after{content:"";position:absolute;width:12px;height:12px;pointer-events:none;z-index:3}
+  .cell:before{top:0;left:0;border-top:1px solid #22b46b;border-left:1px solid #22b46b}
+  .cell:after{bottom:0;right:0;border-bottom:1px solid #22b46b;border-right:1px solid #22b46b}
+  .note{font-size:10.5px;color:#5f8a72;padding:2px 2px 8px}
+  @media (max-width:900px){.row{grid-template-columns:1fr}.full{grid-column:1}}
+</style></head>
+<body>
+<div class="bar" id="status">connecting…</div>
+<div class="row">
+  <div class="cell full"><div id="candles" style="height:360px"></div></div>
+  <div class="cell full"><div id="land" style="height:470px"></div></div>
+  <div class="cell"><div id="depth" style="height:280px"></div></div>
+  <div class="cell"><div id="flow" style="height:280px"></div></div>
+</div>
+<div class="note">Runs in your browser: Binance Spot public market data (no keys) · 24h of 1-minute candles from REST,
+then live updates over WebSocket · charts update in place (no redraw flicker) · 3D landscape = displayed top-20
+resting quantity per bin around each second's mid, last 300 s · not total supply/demand · missing seconds stay empty.</div>
+<script>
+const SYM = "__SYMBOL__", sym = SYM.toLowerCase();
+const REST = ["https://data-api.binance.vision", "https://api.binance.com"];
+const WSB = ["wss://data-stream.binance.vision", "wss://stream.binance.com:9443"];
+const C = {bg:"#020604", panel:"#030a06", grid:"#0c2617", axis:"#1b4a30", text:"#c8efd5", muted:"#6e977f",
+           g:"#39ef8b", cyan:"#3bd4cf", amber:"#e9b54a", red:"#ff5b60"};
+const FONT = {family:"'Source Code Pro',Consolas,monospace", color:C.text, size:11};
+const ax = t => ({title:{text:t,font:{color:C.muted,size:11}}, gridcolor:C.grid, zerolinecolor:C.axis, linecolor:C.axis,
+                  tickfont:{color:C.muted,size:10}});
+const base = (title, extra) => Object.assign({paper_bgcolor:"rgba(0,0,0,0)", plot_bgcolor:"rgba(0,0,0,0)", font:FONT,
+  margin:{l:56,r:16,t:34,b:40}, title:{text:title,font:{size:12,color:C.text},x:0.01}, showlegend:false,
+  hoverlabel:{bgcolor:"#03100a",bordercolor:C.axis,font:FONT}}, extra);
+const CFG = {displaylogo:false, responsive:true, scrollZoom:false, modeBarButtonsToRemove:["lasso2d","select2d"]};
+
+// ---------------------------------------------------------------- state (bounded)
+let bars = [];              // [t, o, h, l, c, v]   1-minute klines, last 24h
+let book = null;            // {bids:[[p,q]], asks:[[p,q]]}
+const hist = [];            // [{sec, mid, levels:[[p,q]...]}]  one per second, max 300
+const flow = new Map();     // sec -> signed quote notional
+let lastMsg = 0, wsState = "connecting", restState = "loading", msgs = 0, wsIdx = 0;
+const HIST_S = 300;
+
+async function getJSON(path){
+  for (const b of REST){ try { const r = await fetch(b + path); if (r.ok) return await r.json(); } catch(e){} }
+  throw new Error("REST unavailable");
+}
+async function loadDay(){
+  const now = Date.now(), start = now - 24*3600e3;
+  try {
+    const a = await getJSON(`/api/v3/klines?symbol=${SYM}&interval=1m&startTime=${start}&limit=1000`);
+    const lastT = a.length ? a[a.length-1][0] + 60e3 : start;
+    const b = await getJSON(`/api/v3/klines?symbol=${SYM}&interval=1m&startTime=${lastT}&limit=1000`);
+    bars = a.concat(b).map(k => [k[0], +k[1], +k[2], +k[3], +k[4], +k[7]]);
+    restState = "ok";
+  } catch(e){ restState = "unavailable"; }
+  drawCandles(true);
+}
+
+// ---------------------------------------------------------------- websocket
+function connect(){
+  const url = `${WSB[wsIdx % WSB.length]}/stream?streams=${sym}@kline_1m/${sym}@depth20@100ms/${sym}@aggTrade`;
+  const ws = new WebSocket(url);
+  ws.onopen = () => { wsState = "live"; };
+  ws.onclose = () => { wsState = "reconnecting"; book = null; wsIdx++; setTimeout(connect, 2000); };
+  ws.onerror = () => { try{ ws.close(); }catch(e){} };
+  ws.onmessage = ev => {
+    lastMsg = Date.now(); msgs++;
+    const m = JSON.parse(ev.data), d = m.data, s = m.stream || "";
+    if (s.endsWith("@kline_1m")) {
+      const k = d.k, row = [k.t, +k.o, +k.h, +k.l, +k.c, +k.q];
+      if (bars.length && bars[bars.length-1][0] === k.t) bars[bars.length-1] = row;
+      else if (!bars.length || k.t > bars[bars.length-1][0]) { bars.push(row); while (bars.length && bars[0][0] < k.t - 24*3600e3) bars.shift(); }
+    } else if (s.includes("@depth")) {
+      book = {bids: d.bids.map(x => [+x[0], +x[1]]).filter(x => x[1] > 0),
+              asks: d.asks.map(x => [+x[0], +x[1]]).filter(x => x[1] > 0)};
+      const sec = Math.floor(Date.now()/1000);
+      if (book.bids.length && book.asks.length && (!hist.length || hist[hist.length-1].sec !== sec)) {
+        const mid = (book.bids[0][0] + book.asks[0][0]) / 2;
+        hist.push({sec, mid, levels: book.bids.concat(book.asks)});
+        while (hist.length && hist[0].sec < sec - HIST_S + 1) hist.shift();
+      }
+    } else if (s.endsWith("@aggTrade")) {
+      const sec = Math.floor(d.T/1000), n = (+d.p) * (+d.q) * (d.m ? -1 : 1);   // m = buyer is maker -> sell aggressor
+      flow.set(sec, (flow.get(sec) || 0) + n);
+      for (const k of flow.keys()) if (k < sec - 120) flow.delete(k);
+    }
+  };
+}
+
+// ---------------------------------------------------------------- charts (Plotly.react = in-place update)
+function drawCandles(first){
+  if (!bars.length){ Plotly.react("candles", [], base(`${SYM} · last 24h · 1-minute candles · ${restState === "ok" ? "" : "history unavailable"}`,
+      {xaxis:ax("UTC"), yaxis:ax("price")}), CFG); return; }
+  const x = bars.map(b => new Date(b[0]));
+  const o = bars.map(b=>b[1]), h = bars.map(b=>b[2]), l = bars.map(b=>b[3]), c = bars.map(b=>b[4]), v = bars.map(b=>b[5]);
+  const open0 = o[0], last = c[c.length-1], chg = (last/open0 - 1)*100;
+  const hi = Math.max(...h), lo = Math.min(...l);
+  Plotly.react("candles", [
+    {type:"candlestick", x, open:o, high:h, low:l, close:c, increasing:{line:{color:C.g,width:1},fillcolor:C.g},
+     decreasing:{line:{color:C.red,width:1},fillcolor:C.red}, hoverinfo:"x+y", name:SYM},
+    {type:"bar", x, y:v, yaxis:"y2", marker:{color:c.map((cc,i)=> cc>=o[i] ? "rgba(57,239,139,0.25)" : "rgba(255,91,96,0.25)")},
+     hovertemplate:"vol %{y:,.0f}<extra></extra>"}],
+    base(`${SYM} · last 24h · 1-minute candles · ${chg>=0?"+":""}${chg.toFixed(2)}% · range ${lo.toLocaleString()} – ${hi.toLocaleString()}`,
+      {uirevision:"candles", xaxis:Object.assign(ax("UTC"), {rangeslider:{visible:false}}),
+       yaxis:Object.assign(ax("price"), {domain:[0.22,1]}), yaxis2:Object.assign(ax("quote vol"), {domain:[0,0.18]}),
+       shapes:[{type:"line", xref:"paper", x0:0, x1:1, y0:open0, y1:open0, line:{color:C.amber,width:1,dash:"dot"}}]}), CFG);
+}
+
+let landRange = null, landTop = 1;
+function drawLand(){
+  if (hist.length < 2) return;
+  const now = hist[hist.length-1].sec;
+  // window: 99th pct of level distance (bps), quantized so it rarely changes; never shrinks within a session
+  const offs = []; for (const h of hist) for (const [p] of h.levels) offs.push(Math.abs(p/h.mid - 1)*1e4);
+  offs.sort((a,b)=>a-b); let hw = offs[Math.floor(0.99*(offs.length-1))] || 1;
+  const step = Math.pow(10, Math.floor(Math.log10(hw))) / 2; hw = Math.ceil(hw/step)*step;
+  if (!landRange || hw > landRange) landRange = hw;
+  const nb = 40, w = 2*landRange/nb, cx = Array.from({length:nb}, (_,i)=> -landRange + (i+0.5)*w);
+  const secs = Array.from({length:HIST_S}, (_,i)=> now - HIST_S + 1 + i);
+  const by = new Map(hist.map(h => [h.sec, h]));
+  const Z = [], S = []; let zmax = 0;
+  for (const s of secs){
+    const h = by.get(s);
+    if (!h){ Z.push(cx.map(()=>null)); S.push(cx.map(()=>0)); continue; }
+    const row = new Array(nb).fill(0);
+    for (const [p,q] of h.levels){ const j = Math.floor(((p/h.mid - 1)*1e4 + landRange)/w); if (j>=0 && j<nb) row[j] += q; }
+    zmax = Math.max(zmax, ...row); Z.push(row); S.push(cx.map(x => x<0 ? -1 : 1));
+  }
+  while (landTop < zmax) landTop *= 2;
+  Plotly.react("land", [{type:"surface", x:cx, y:secs.map(s=>s-now), z:Z, surfacecolor:S, cmin:-1, cmax:1, showscale:false,
+      colorscale:[[0,C.g],[0.5,"#04170c"],[1,C.red]], lighting:{ambient:0.6,diffuse:0.6,specular:0.15,roughness:0.6},
+      contours:{z:{show:false}}, hovertemplate:"%{x:+.3f} bps<br>t%{y}s<br>qty %{z:.4g}<extra></extra>"}],
+    base(`Order-book landscape · last ${HIST_S}s · displayed top-20 depth · ±${landRange.toPrecision(3)} bp`, {
+      uirevision:"land", margin:{l:0,r:0,t:34,b:0},
+      scene:{bgcolor:C.bg, aspectmode:"manual", aspectratio:{x:1.4,y:1.6,z:0.55},
+        camera:{eye:{x:-1.45,y:-1.45,z:0.8}},
+        xaxis:Object.assign(ax("bps from mid (− bids · + asks)"), {range:[-landRange, landRange], backgroundcolor:C.panel, showbackground:true}),
+        yaxis:Object.assign(ax("seconds ago"), {range:[-HIST_S, 0], backgroundcolor:C.panel, showbackground:true}),
+        zaxis:Object.assign(ax("displayed qty"), {range:[0, landTop], backgroundcolor:C.panel, showbackground:true})}}), CFG);
+}
+
+function drawDepth(){
+  if (!book) return;
+  const cum = a => { let s=0; return a.map(([p,q]) => (s+=q, [p,s])); };
+  const b = cum(book.bids), a = cum(book.asks);
+  Plotly.react("depth", [
+    {x:b.map(r=>r[0]), y:b.map(r=>r[1]), type:"scatter", mode:"lines", line:{color:C.g,width:1.4,shape:"hv"}, fill:"tozeroy", fillcolor:"rgba(57,239,139,0.07)"},
+    {x:a.map(r=>r[0]), y:a.map(r=>r[1]), type:"scatter", mode:"lines", line:{color:C.red,width:1.4,shape:"hv"}, fill:"tozeroy", fillcolor:"rgba(255,91,96,0.06)"}],
+    base("Displayed depth · cumulative qty", {uirevision:"depth", xaxis:ax("price"), yaxis:ax("cum base qty")}), CFG);
+}
+function drawFlow(){
+  const now = Math.floor(Date.now()/1000), xs = [], ys = [];
+  for (let s = now-119; s <= now; s++){ xs.push(s-now); ys.push(flow.get(s) || 0); }
+  Plotly.react("flow", [{type:"bar", x:xs, y:ys, marker:{color:ys.map(v=> v>=0 ? C.g : C.red)}, hovertemplate:"t%{x}s<br>%{y:,.0f}<extra></extra>"}],
+    base("Signed aggressor flow / s · last 120 s", {uirevision:"flow", bargap:0.15, xaxis:ax("seconds from now"), yaxis:ax("quote notional")}), CFG);
+}
+function drawStatus(){
+  const age = lastMsg ? (Date.now()-lastMsg)/1000 : null;
+  const cls = wsState === "live" && age !== null && age < 5 ? "ok" : (wsState === "live" ? "warn" : "bad");
+  const last = bars.length ? bars[bars.length-1][4] : null;
+  document.getElementById("status").innerHTML =
+    `<span>feed <b class="${cls}">${wsState.toUpperCase()}</b></span><span>sym <b>${SYM}</b></span>` +
+    `<span>last <b>${last === null ? "N/A" : last.toLocaleString()}</b></span>` +
+    `<span>recv age <b class="${age !== null && age > 5 ? "warn" : ""}">${age === null ? "N/A" : age.toFixed(1)+"s"}</b></span>` +
+    `<span>24h history <b class="${restState === "ok" ? "" : "warn"}">${restState}</b></span>` +
+    `<span>book samples <b>${hist.length}</b></span><span>clock <b>${new Date().toISOString().slice(11,19)} UTC</b></span>`;
+}
+
+// plotly.js is served locally by Streamlit's static route as text/plain, so load it as inline script text
+(async () => {
+  let origin = "";
+  try { origin = window.parent.location.origin; } catch (e) { origin = location.origin; }
+  try {
+    const code = await (await fetch(origin + "/app/static/plotly.min.js")).text();
+    const el = document.createElement("script"); el.textContent = code; document.head.appendChild(el);
+  } catch (e) { document.getElementById("status").textContent = "chart library unavailable: " + e; return; }
+  loadDay(); connect();
+  setInterval(() => { drawStatus(); drawDepth(); drawFlow(); drawCandles(false); }, 1000);
+  setInterval(drawLand, 1000);
+})();
+</script>
+</body></html>
