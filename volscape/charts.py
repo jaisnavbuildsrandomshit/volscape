@@ -565,3 +565,32 @@ def book_landscape(history: list, bins_bps: float | None = None, half_width_bps:
     fig.update_layout(scene=sc)
     return _layout3d(fig, "vs3d:book",
                      f"Order-book landscape · last {len(secs)}s · displayed top-20 depth · ±{half_width_bps:.3g} bp · bin {bins_bps:.3g} bp", height)
+
+
+def volume_landscape(times, o, h, l, c, v, tz="UTC", bucket_min=5, n_price=40, height=480):
+    """Volume traded at price through the session: x = time bucket, y = price bin, z = volume.
+    Each 1-minute bar's volume is spread evenly over its own low-high range (bars carry no
+    intrabar distribution), so this approximates where volume traded; it is not tick data."""
+    t = pd.DatetimeIndex(times)
+    lo, hi = float(np.min(l)), float(np.max(h))
+    if not np.isfinite(lo) or hi <= lo:
+        return None
+    edges = np.linspace(lo, hi, n_price + 1)
+    mids = (edges[:-1] + edges[1:]) / 2
+    bk = t.floor(f"{bucket_min}min")
+    keys = sorted(set(bk))
+    Z = np.zeros((n_price, len(keys)))
+    col = {k: i for i, k in enumerate(keys)}
+    for bi, lo_i, hi_i, vol in zip(bk, l, h, v):
+        if not vol:
+            continue
+        a = max(0, np.searchsorted(edges, lo_i, side="right") - 1)
+        b = min(n_price - 1, np.searchsorted(edges, hi_i, side="right") - 1)
+        Z[a:b + 1, col[bi]] += vol / (b - a + 1)
+    fig = go.Figure(go.Surface(
+        x=[k.strftime("%H:%M") for k in keys], y=mids, z=Z, colorscale=COLORSCALES["Phosphor"], showscale=False,
+        contours=dict(z=dict(show=False)), lighting=dict(ambient=0.6, diffuse=0.6, specular=0.12, roughness=0.7),
+        hovertemplate="%{x}<br>price %{y:,.2f}<br>volume %{z:,.0f}<extra></extra>"))
+    fig.update_layout(scene=scene_axes(f"time ({tz})", "price", "volume", aspectratio=dict(x=1.6, y=1.2, z=0.6)))
+    return _layout3d(fig, "vs3d:volprofile",
+                     f"Volume at price through the session · {bucket_min}-min buckets · bar volume spread over its high–low", height)

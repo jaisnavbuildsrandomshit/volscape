@@ -19,6 +19,7 @@
   <div class="cell"><div id="depth" style="height:280px"></div></div>
   <div class="cell"><div id="flow" style="height:280px"></div></div>
 </div>
+<div class="cell full"><div id="report" style="font-size:12px;line-height:1.6;padding:10px 4px"></div></div>
 <div class="note">Runs in your browser: Binance Spot public market data (no keys) · 24h of 1-minute candles from REST,
 then live updates over WebSocket · charts update in place (no redraw flicker) · 3D landscape = displayed top-20
 resting quantity per bin around each second's mid, last 300 s · not total supply/demand · missing seconds stay empty.</div>
@@ -110,9 +111,16 @@ function drawCandles(first){
        shapes:[{type:"line", xref:"paper", x0:0, x1:1, y0:open0, y1:open0, line:{color:C.amber,width:1,dash:"dot"}}]}), CFG);
 }
 
-let landRange = null, landTop = 1;
+let landRange = null, landTop = 1, landBusyUntil = 0, landDown = false;
+function hookLand(){
+  const el = document.getElementById("land");
+  el.addEventListener("pointerdown", () => { landDown = true; }, true);
+  window.addEventListener("pointerup", () => { landDown = false; landBusyUntil = Date.now() + 1500; }, true);
+  el.addEventListener("wheel", () => { landBusyUntil = Date.now() + 1500; }, {capture:true, passive:true});
+}
 function drawLand(){
   if (hist.length < 2) return;
+  if (landDown || Date.now() < landBusyUntil) return;     // never redraw under the user's hands
   const now = hist[hist.length-1].sec;
   // window: 99th pct of level distance (bps), quantized so it rarely changes; never shrinks within a session
   const offs = []; for (const h of hist) for (const [p] of h.levels) offs.push(Math.abs(p/h.mid - 1)*1e4);
@@ -170,6 +178,28 @@ function drawStatus(){
     `<span>book samples <b>${hist.length}</b></span><span>clock <b>${new Date().toISOString().slice(11,19)} UTC</b></span>`;
 }
 
+function drawReport(){
+  const el = document.getElementById("report"); if (!el) return;
+  if (bars.length < 30){ el.innerHTML = "<b>Analysis</b> · N/A: need at least 30 minutes of history."; return; }
+  const c = bars.map(b=>b[4]), v = bars.map(b=>b[5]), h = bars.map(b=>b[2]), l = bars.map(b=>b[3]);
+  const first = bars[0][1], last = c[c.length-1], ret = (last/first-1)*100;
+  const hi = Math.max(...h), lo = Math.min(...l), pos = (last-lo)/(hi-lo||1);
+  const r = []; for (let i=1;i<c.length;i++) r.push(Math.log(c[i]/c[i-1]));
+  const mu = r.reduce((a,b)=>a+b,0)/r.length, sd = Math.sqrt(r.reduce((a,b)=>a+(b-mu)**2,0)/(r.length-1));
+  const rv = sd*Math.sqrt(525600)*100;                              // 1m log returns, annualised (24/7 market)
+  let pv=0, vv=0; bars.forEach(b=>{ const tp=(b[2]+b[3]+b[4])/3; pv+=tp*b[5]/b[4]; vv+=b[5]/b[4]; }); const vwap = pv/vv;
+  let peak=c[0], mdd=0; c.forEach(x=>{ peak=Math.max(peak,x); mdd=Math.min(mdd,x/peak-1); });
+  const half = Math.floor(v.length/2), v1 = v.slice(0,half).reduce((a,b)=>a+b,0), v2 = v.slice(half).reduce((a,b)=>a+b,0);
+  const fmt = x => x.toLocaleString(undefined,{maximumFractionDigits:2});
+  const trend = last > vwap ? "above" : "below";
+  el.innerHTML = `<b style="color:#39ef8b">ANALYSIS · ${SYM} · last 24h</b> <span style="color:#5f8a72">(descriptive statistics from 1-minute bars; not investment advice)</span><br>`+
+    `Return <b>${ret>=0?"+":""}${ret.toFixed(2)}%</b> · range <b>${fmt(lo)} – ${fmt(hi)}</b> (${((hi/lo-1)*100).toFixed(2)}%) · price sits at <b>${(pos*100).toFixed(0)}%</b> of the range · `+
+    `VWAP <b>${fmt(vwap)}</b> (price ${trend} it) · realised vol <b>${rv.toFixed(1)}%</b> annualised · max intraday drawdown <b>${(mdd*100).toFixed(2)}%</b> · `+
+    `volume ${v2>=v1?"rose":"fell"} <b>${(Math.abs(v2/v1-1)*100).toFixed(0)}%</b> in the second half of the window.<br>`+
+    `<span style="color:#7ea58d">In plain words: ${SYM} is ${ret>=0?"up":"down"} ${Math.abs(ret).toFixed(2)}% over 24h, trading ${pos>0.66?"near the top":pos<0.33?"near the bottom":"in the middle"} of its range and ${trend} its volume-weighted average, `+
+    `with ${rv>80?"high":rv>40?"moderate":"low"} realised volatility.</span>`;
+}
+
 // plotly.js is served locally by Streamlit's static route as text/plain, so load it as inline script text
 (async () => {
   let origin = "";
@@ -178,9 +208,10 @@ function drawStatus(){
     const code = await (await fetch(origin + "/app/static/plotly.min.js")).text();
     const el = document.createElement("script"); el.textContent = code; document.head.appendChild(el);
   } catch (e) { document.getElementById("status").textContent = "chart library unavailable: " + e; return; }
-  loadDay(); connect();
+  hookLand(); loadDay(); connect(); drawReport();
   setInterval(() => { drawStatus(); drawDepth(); drawFlow(); drawCandles(false); }, 1000);
-  setInterval(drawLand, 1000);
+  setInterval(drawLand, 2000);
+  setInterval(drawReport, 15000);
 })();
 </script>
 </body></html>

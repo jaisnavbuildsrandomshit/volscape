@@ -149,6 +149,47 @@ def _equity_panel(symbol: str) -> None:
     fig.update_xaxes(**ch._axis(f"time ({chart.tz_name})"))
     fig.update_yaxes(**ch._axis(""))
     st.plotly_chart(fig, key="eq_day", config=PLOT_CFG, theme=None)
+    vl = ch.volume_landscape(x, o, h, l, c, v, chart.tz_name or "UTC")
+    if vl is not None and sum(v) > 0:
+        st.plotly_chart(vl, key="eq_vol3d", config={**PLOT_CFG, "scrollZoom": False}, theme=None)
+    else:
+        st.caption("3D volume view N/A: this source reports no volume for this index (common for index levels).")
+    _equity_report(chart, x, o, h, l, c, v)
+
+
+def _equity_report(chart, x, o, h, l, c, v) -> None:
+    """Descriptive statistics of the session; not investment advice."""
+    c_ = np.asarray(c, float)
+    if len(c_) < 30:
+        st.caption("Analysis N/A: fewer than 30 one-minute bars in this session.")
+        return
+    r = np.diff(np.log(c_))
+    mins = ((chart.regular_end - chart.regular_start) / 60) if chart.regular_start and chart.regular_end else 390
+    rv = float(np.std(r, ddof=1) * np.sqrt(252 * mins) * 100)
+    hi, lo, last = float(np.max(h)), float(np.min(l)), float(c_[-1])
+    pos = (last - lo) / (hi - lo) if hi > lo else np.nan
+    vv = np.asarray(v, float)
+    tp = (np.asarray(h) + np.asarray(l) + c_) / 3
+    vwap = float((tp * vv).sum() / vv.sum()) if vv.sum() > 0 else np.nan
+    dd = float((c_ / np.maximum.accumulate(c_) - 1).min() * 100)
+    ref = chart.prev_close
+    ret = (last / ref - 1) * 100 if ref else (last / c_[0] - 1) * 100
+    first_h = float(c_[min(59, len(c_) - 1)] / c_[0] - 1) * 100
+    words = (f"{chart.name} is {'up' if ret >= 0 else 'down'} {abs(ret):.2f}% "
+             f"{'versus the previous close' if ref else 'since the session open'}, trading "
+             f"{'near the top' if pos > 0.66 else 'near the bottom' if pos < 0.33 else 'in the middle'} of today's range"
+             + ("" if np.isnan(vwap) else f" and {'above' if last > vwap else 'below'} its session VWAP")
+             + f". The first hour moved {first_h:+.2f}%; realised volatility is "
+             f"{'high' if rv > 30 else 'moderate' if rv > 15 else 'low'} at {rv:.1f}% annualised.")
+    st.markdown(
+        f'<div class="vs-panel-title">Analysis · {html.escape(chart.name)} · session of {x[-1]:%Y-%m-%d}</div>'
+        f'<div class="vs-conv" style="font-size:0.8rem;color:var(--text)">'
+        f'Return <b>{ret:+.2f}%</b> · range <b>{lo:,.2f} – {hi:,.2f}</b> ({(hi / lo - 1) * 100:.2f}%) · position in range '
+        f'<b>{_n(pos * 100 if pos == pos else None, "{:.0f}%")}</b> · VWAP <b>{_n(vwap if vwap == vwap else None, "{:,.2f}")}</b> · '
+        f'realised vol <b>{rv:.1f}%</b> ann. · max intraday drawdown <b>{dd:.2f}%</b><br>'
+        f'<span style="color:var(--dim)">In plain words: {html.escape(words)}</span><br>'
+        f'<span style="color:var(--faint)">Descriptive statistics from delayed 1-minute bars; not investment advice.</span>'
+        f'</div>', unsafe_allow_html=True)
 
 
 @st.fragment(run_every=2.0)
